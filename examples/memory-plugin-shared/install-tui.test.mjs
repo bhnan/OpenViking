@@ -96,31 +96,31 @@ printf '%s\\n' "$SELECTED_HARNESSES"
   assert.equal(result.stdout.trim(), "trae");
 });
 
-test("TRAE CLI is marked as detected in the TUI only when its command is available", (t) => {
+test("TRAE CLI command aliases are detected and auto-selected", (t) => {
   const home = makeTempHome(t);
   const cliHome = join(home, ".trae", "cli");
-  const bin = join(home, "bin");
   mkdirSync(cliHome, { recursive: true });
-  mkdirSync(bin);
   writeFileSync(join(cliHome, "hooks.json"), "{}\n");
-  writeFileSync(join(bin, "traecli"), "#!/bin/sh\nexit 0\n");
-  chmodSync(join(bin, "traecli"), 0o755);
+  for (const command of ["traecli", "traex"]) {
+    const bin = join(home, `bin-${command}`);
+    mkdirSync(bin);
+    writeFileSync(join(bin, command), "#!/bin/sh\nexit 0\n");
+    chmodSync(join(bin, command), 0o755);
 
-  const configOnly = runInstallerPrelude(`
-PATH=/usr/bin:/bin
-HOME=${JSON.stringify(home)}
-refresh_available_harnesses
-if tui_bin_detected trae-cli traecli; then printf 'detected'; else printf 'not-detected'; fi
-`);
-  const withCommand = runInstallerPrelude(`
+    const result = runInstallerPrelude(`
 PATH=${JSON.stringify(`${bin}:/usr/bin:/bin`)}
 HOME=${JSON.stringify(home)}
 refresh_available_harnesses
-if tui_bin_detected trae-cli traecli; then printf 'detected'; else printf 'not-detected'; fi
+tui_reset_bin_selection
+selected_in_tui="$SEL_TRAE_CLI"
+INTERACTIVE=0
+REQUESTED_HARNESSES=""
+select_harnesses
+if tui_bin_detected trae-cli traecli; then detected=yes; else detected=no; fi
+printf '%s:%s:%s\\n' "$selected_in_tui" "$SELECTED_HARNESSES" "$detected"
 `);
 
-  assert.equal(configOnly.status, 0, configOnly.stderr);
-  assert.equal(configOnly.stdout, "not-detected");
-  assert.equal(withCommand.status, 0, withCommand.stderr);
-  assert.equal(withCommand.stdout, "detected");
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "1:trae,trae-cli:yes", command);
+  }
 });

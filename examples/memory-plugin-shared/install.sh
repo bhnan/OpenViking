@@ -369,13 +369,12 @@ EOF
 }
 
 refresh_available_harnesses() {
-  HAVE_CLAUDE=0; HAVE_CODEX=0; HAVE_CURSOR=0; HAVE_TRAE=0; HAVE_TRAE_CN=0; HAVE_TRAE_CLI=0; HAVE_OPENCODE=0; HAVE_PI=0; HAVE_ZCODE=0
+  HAVE_CLAUDE=0; HAVE_CODEX=0; HAVE_CURSOR=0; HAVE_TRAE=0; HAVE_TRAE_CN=0; HAVE_OPENCODE=0; HAVE_PI=0; HAVE_ZCODE=0
   has_available_bin "$CLAUDE_BINS" && HAVE_CLAUDE=1
   has_available_bin "$CODEX_BINS" && HAVE_CODEX=1
   { command -v cursor >/dev/null 2>&1 || command -v cursor-agent >/dev/null 2>&1 || [ -d "/Applications/Cursor.app" ] || [ -d "$HOME/.cursor" ]; } && HAVE_CURSOR=1
-  { [ -d "/Applications/Trae.app" ] || [ -d "/Applications/TRAE.app" ] || [ -f "${TRAE_HOME:-$HOME/.trae}/hooks.json" ]; } && HAVE_TRAE=1
+  { [ -d "/Applications/Trae.app" ] || [ -d "/Applications/TRAE.app" ] || [ -d "$HOME/.trae" ]; } && HAVE_TRAE=1
   { [ -d "/Applications/Trae CN.app" ] || [ -d "/Applications/TRAE SOLO CN.app" ] || [ -d "$HOME/.trae-cn" ]; } && HAVE_TRAE_CN=1
-  { command -v traecli >/dev/null 2>&1 || [ -f "${TRAECLI_HOME:-${TRAE_HOME:-$HOME/.trae}/cli}/hooks.json" ] || [ -f "${TRAE_HOME:-$HOME/.trae}/traecli.toml" ]; } && HAVE_TRAE_CLI=1
   command -v opencode >/dev/null 2>&1 && HAVE_OPENCODE=1
   command -v pi >/dev/null 2>&1 && HAVE_PI=1
   { command -v zcode >/dev/null 2>&1 || [ -d "$HOME/.zcode" ]; } && HAVE_ZCODE=1
@@ -445,7 +444,7 @@ NODE
 CLAUDE_BINS="$(normalize_bin_list "$CLAUDE_BINS_ARG" claude)"
 CODEX_BINS="$(normalize_bin_list "$CODEX_BINS_ARG" codex)"
 
-HAVE_CLAUDE=0; HAVE_CODEX=0; HAVE_CURSOR=0; HAVE_TRAE=0; HAVE_TRAE_CN=0; HAVE_TRAE_CLI=0; HAVE_OPENCODE=0; HAVE_PI=0; HAVE_ZCODE=0
+HAVE_CLAUDE=0; HAVE_CODEX=0; HAVE_CURSOR=0; HAVE_TRAE=0; HAVE_TRAE_CN=0; HAVE_OPENCODE=0; HAVE_PI=0; HAVE_ZCODE=0
 refresh_available_harnesses
 
 TUI_CLAUDE_BINS="$CLAUDE_BINS"
@@ -572,7 +571,7 @@ tui_bin_detected() { # tui_bin_detected <kind> <bin>
     cursor) [ "$HAVE_CURSOR" -eq 1 ] ;;
     trae) [ "$HAVE_TRAE" -eq 1 ] ;;
     trae-cn) [ "$HAVE_TRAE_CN" -eq 1 ] ;;
-    trae-cli) [ "$HAVE_TRAE_CLI" -eq 1 ] ;;
+    trae-cli) command -v traecli >/dev/null 2>&1 ;;
     zcode) [ "$HAVE_ZCODE" -eq 1 ] ;;
     *) command -v "$2" >/dev/null 2>&1 ;;
   esac
@@ -705,7 +704,6 @@ EOF
   if [ "$HAVE_CURSOR" -eq 1 ]; then SEL_CURSOR_APP=1; any=1; fi
   if [ "$HAVE_TRAE" -eq 1 ]; then SEL_TRAE=1; any=1; fi
   if [ "$HAVE_TRAE_CN" -eq 1 ]; then SEL_TRAE_CN=1; any=1; fi
-  if [ "$HAVE_TRAE_CLI" -eq 1 ]; then SEL_TRAE_CLI=1; any=1; fi
   if [ "$HAVE_ZCODE" -eq 1 ]; then SEL_ZCODE=1; any=1; fi
   if [ "$any" -ne 1 ]; then
     SEL_CLAUDE_BINS="$TUI_CLAUDE_BINS"
@@ -878,7 +876,6 @@ select_harnesses() {
   [ "$HAVE_CURSOR" -eq 1 ] && detected="${detected:+$detected,}cursor"
   [ "$HAVE_TRAE" -eq 1 ] && detected="${detected:+$detected,}trae"
   [ "$HAVE_TRAE_CN" -eq 1 ] && detected="${detected:+$detected,}trae-cn"
-  [ "$HAVE_TRAE_CLI" -eq 1 ] && detected="${detected:+$detected,}trae-cli"
   [ "$HAVE_OPENCODE" -eq 1 ] && detected="${detected:+$detected,}opencode"
   [ "$HAVE_PI" -eq 1 ] && detected="${detected:+$detected,}pi"
   [ "$HAVE_ZCODE" -eq 1 ] && detected="${detected:+$detected,}zcode"

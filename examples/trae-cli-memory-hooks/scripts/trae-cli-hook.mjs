@@ -19,7 +19,7 @@ import {
   withAgentHookLock,
   writeHookState,
 } from "../../memory-plugin-shared/lib/agent-hook-runtime.mjs";
-import { buildTraeCliTurns, cleanTraeCliText } from "./trae-cli-turns.mjs";
+import { buildTraeCliTurns, resolveTraeCliPrompt } from "./trae-cli-turns.mjs";
 
 const eventName = process.env.OPENVIKING_HOOK_EVENT || process.argv[2] || "";
 const clientId = "trae-cli";
@@ -70,7 +70,7 @@ async function main() {
   }
 
   if (eventName === "user-prompt-submit") {
-    const prompt = cleanTraeCliText(input.prompt);
+    const prompt = resolveTraeCliPrompt(input);
     if (!prompt) { emitLifecycleOutput(); return; }
     const recallBlock = await withAgentHookLock(clientId, nativeSessionId, async () => {
       state = await readHookState(clientId, nativeSessionId);

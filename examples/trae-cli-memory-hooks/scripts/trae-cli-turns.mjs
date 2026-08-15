@@ -5,9 +5,33 @@ export function cleanTraeCliText(value) {
     .trim();
 }
 
+function firstTraeCliText(input, fields) {
+  for (const field of fields) {
+    const text = cleanTraeCliText(input?.[field]);
+    if (text) return text;
+  }
+  return "";
+}
+
+export function resolveTraeCliPrompt(input = {}) {
+  return firstTraeCliText(input, ["prompt", "user_prompt", "userPrompt", "message", "text"]);
+}
+
+export function resolveTraeCliResponse(input = {}) {
+  return firstTraeCliText(input, [
+    "last_assistant_message",
+    "lastAssistantMessage",
+    "assistant_message",
+    "assistantMessage",
+    "response",
+    "output",
+    "text_content",
+  ]);
+}
+
 export function buildTraeCliTurns(input = {}, state = {}) {
   return [
-    { role: "user", content: cleanTraeCliText(input.prompt || state.pendingPrompt?.prompt) },
-    { role: "assistant", content: cleanTraeCliText(input.last_assistant_message || input.text_content) },
+    { role: "user", content: resolveTraeCliPrompt(input) || cleanTraeCliText(state.pendingPrompt?.prompt) },
+    { role: "assistant", content: resolveTraeCliResponse(input) },
   ].filter((turn) => turn.content);
 }

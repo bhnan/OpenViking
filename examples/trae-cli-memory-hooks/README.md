@@ -47,8 +47,8 @@ Tool-call allow/deny decisions belong to `PreToolUse` via
 
 The MCP server is named `openviking-memory`, matching the Codex memory plugin
 name. The package keeps the same `.mcp.json` source shape as the other native
-hook integrations; the shared installer renders it into TRAE CLI's active
-`traecli.toml`:
+hook integrations; the shared installer writes the equivalent Node proxy entry
+into TRAE CLI's configured `traecli.toml`:
 
 ```json
 {

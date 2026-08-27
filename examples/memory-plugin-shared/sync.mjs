@@ -60,6 +60,13 @@ const SKILL_TARGETS = [
       join(ROOT, "examples", "dsh-memory-plugin", "skills"),
     ],
   },
+  {
+    // Repo Wiki is a repository-local authoring and published-Wiki retrieval
+    // skill. It is bundled with the Codex-compatible plugin used by TraeCode
+    // CLI 2.0, rather than the deprecated standalone TRAE CLI runtime.
+    skill: "repo-wiki",
+    dirs: [join(ROOT, "examples", "codex-memory-plugin", "skills")],
+  },
 ];
 
 async function listSharedFiles() {
@@ -75,13 +82,23 @@ async function copySharedFile(file, targetDir) {
   await writeFile(target, `${GENERATED_HEADER}${body}`, "utf-8");
 }
 
-async function copySkill(skill, targetDir) {
-  const sourceDir = join(SKILLS_DIR, skill);
-  for (const file of (await readdir(sourceDir)).sort()) {
-    const target = join(targetDir, skill);
-    await mkdir(target, { recursive: true });
-    await writeFile(join(target, file), await readFile(join(sourceDir, file), "utf-8"), "utf-8");
+async function copySkillTree(sourceDir, targetDir) {
+  await mkdir(targetDir, { recursive: true });
+  for (const entry of (await readdir(sourceDir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+    const source = join(sourceDir, entry.name);
+    const target = join(targetDir, entry.name);
+    if (entry.isDirectory()) {
+      await copySkillTree(source, target);
+    } else if (entry.isFile()) {
+      await writeFile(target, await readFile(source, "utf-8"), "utf-8");
+    } else {
+      throw new Error(`skill contains unsupported entry: ${source}`);
+    }
   }
+}
+
+async function copySkill(skill, targetDir) {
+  await copySkillTree(join(SKILLS_DIR, skill), join(targetDir, skill));
 }
 
 async function main() {

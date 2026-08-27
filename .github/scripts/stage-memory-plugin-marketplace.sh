@@ -20,8 +20,16 @@ cp -R \
   "${ROOT}/examples/pi-coding-agent-extension" \
   "${ROOT}/examples/memory-plugin-shared" \
   "${STAGE}/"
+mkdir -p "${STAGE}/skills"
+cp -R "${ROOT}/examples/skills/repo-wiki" "${STAGE}/skills/"
 
 for required in \
+  skills/repo-wiki/SKILL.md \
+  skills/repo-wiki/defaults.json \
+  skills/repo-wiki/references/openviking-read.md \
+  skills/repo-wiki/references/repo-build.md \
+  skills/repo-wiki/scripts/collect_all.py \
+  skills/repo-wiki/scripts/validate_memory.py \
   claude-code-memory-plugin/skills/ov-experience-memory/SKILL.md \
   codex-memory-plugin/skills/ov-experience-memory/SKILL.md \
   cursor-memory-plugin/.cursor-plugin/plugin.json \
@@ -47,6 +55,7 @@ for required in \
   codex-memory-plugin/scripts/ov-memory-doctor.mjs \
   codex-memory-plugin/scripts/repository-sync.mjs \
   codex-memory-plugin/scripts/shared/repository-sync.mjs \
+  codex-memory-plugin/skills/repo-wiki/SKILL.md \
   trae-memory-hooks/hooks/hooks.json \
   trae-memory-hooks/.mcp.json \
   trae-memory-hooks/openviking.integration.json \

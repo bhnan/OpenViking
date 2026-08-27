@@ -2,16 +2,18 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rename,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, posix } from "node:path";
 import { promisify } from "node:util";
 
 import { resolveOpenVikingCredentials } from "./credentials.mjs";
@@ -30,6 +32,12 @@ const MUTATING_GIT_COMMANDS = new Set([
 const STATE_DIR_MODE = 0o700;
 const STATE_FILE_MODE = 0o600;
 const LOCAL_REPOSITORY_KEY_CONFIG = "openviking.repositoryKey";
+const WIKI_DIR = ".repo_memory";
+const WIKI_PROFILE_SCHEMA = "repo_memory_profile.v0.2";
+const WIKI_PAGE_SCHEMA = "repo_memory_wiki_page.v0.1";
+const WIKI_RESOURCE_FILES = new Set(["commits.md", "prs.md", "issues.md"]);
+const WIKI_IGNORED_DIRS = new Set(["raw", "procedure-memory", "user-profile", "__pycache__"]);
+const WIKI_IGNORED_FILES = new Set([".DS_Store"]);
 
 function hash(value) {
   return createHash("sha256").update(String(value || "")).digest("hex");
@@ -156,9 +164,23 @@ async function getLocalRepositoryKey(root) {
   }
 }
 
+function stripRemoteCredentials(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    parsed.username = "";
+    parsed.password = "";
+    return parsed.toString().replace(/\/$/u, "");
+  } catch {
+    return raw.replace(/^(https?:\/\/)[^/@]+@/u, "$1");
+  }
+}
+
 export async function resolveRepositoryContext(cwd) {
   const root = await runGit(cwd, ["rev-parse", "--show-toplevel"]);
   const commit = await runGit(root, ["rev-parse", "HEAD"]);
+  const tree = await runGit(root, ["rev-parse", "HEAD^{tree}"]);
   let branch = await runGit(root, ["branch", "--show-current"]);
   if (!branch) branch = `detached-${commit.slice(0, 12)}`;
 
@@ -168,18 +190,18 @@ export async function resolveRepositoryContext(cwd) {
   } catch {
     // This is the intended local-only repository case.
   }
-  if (origin) {
-    return { root, commit: commit.toLowerCase(), branch, repoName: basename(root), remoteOrigin: origin };
-  }
-
-  const repoKey = await getLocalRepositoryKey(root);
+  const repoKey = origin ? stripRemoteCredentials(origin) : await getLocalRepositoryKey(root);
+  const repoId = hash(repoKey).slice(0, 24);
   return {
     root,
     commit: commit.toLowerCase(),
+    tree: tree.toLowerCase(),
     branch,
     repoKey,
+    repoId,
     repoName: basename(root),
-    targetUri: `viking://resources/local-git/${hash(repoKey).slice(0, 24)}/${branchTargetSegment(branch)}`,
+    remoteOrigin: Boolean(origin),
+    targetUri: `viking://resources/local-git/${repoId}/${branchTargetSegment(branch)}`,
   };
 }
 
@@ -245,11 +267,197 @@ export async function createRepositoryArchive(context) {
   const archive = join(directory, `${safePart(context.repoName, "repository")}.zip`);
   await execFileAsync(
     "git",
-    ["-C", context.root, "archive", "--format=zip", `--output=${archive}`, "HEAD"],
+    [
+      "-C", context.root, "archive", "--format=zip", `--output=${archive}`, "HEAD",
+      "--", ".", `:(exclude)${WIKI_DIR}`, `:(exclude)${WIKI_DIR}/**`,
+    ],
     { timeout: 120_000, maxBuffer: 1024 * 1024 },
   );
   await chmod(archive, STATE_FILE_MODE);
   return { archive, cleanup: () => rm(directory, { recursive: true, force: true }) };
+}
+
+function wikiUploadEnabled(options = {}) {
+  if (typeof options.wikiUploadEnabled === "boolean") return options.wikiUploadEnabled;
+  const value = String(process.env.OPENVIKING_REPO_WIKI_UPLOAD_ENABLED || "").trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(value);
+}
+
+function metadataValue(text, name) {
+  const prefix = `${name}:`;
+  const line = String(text || "").split(/\r?\n/u).find((candidate) => candidate.startsWith(prefix));
+  if (!line) return "";
+  return line.slice(prefix.length).trim().replace(/^["']|["']$/gu, "").trim();
+}
+
+function validUserId(value) {
+  const raw = String(value || "").trim();
+  return raw && raw !== "." && raw !== ".." && /^[A-Za-z0-9._-]+$/u.test(raw) ? raw : "";
+}
+
+export async function resolveEffectiveUserId(credentials, fetchImpl = globalThis.fetch) {
+  const configured = validUserId(credentials?.user);
+  if (configured) return configured;
+  for (const endpoint of ["/health", "/api/v1/system/status"]) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    try {
+      const response = await fetchImpl(`${credentials.baseUrl}${endpoint}`, {
+        headers: authHeaders(credentials),
+        signal: controller.signal,
+      });
+      if (!response.ok) continue;
+      const body = await response.json().catch(() => ({}));
+      const candidate = validUserId(body.user_id || body.result?.user);
+      if (candidate) return candidate;
+    } catch {
+      // A missing identity skips only Wiki publication.
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return "";
+}
+
+async function publicationFiles(wikiRoot) {
+  const profile = join(wikiRoot, "PROFILE.md");
+  const profileStat = await lstat(profile).catch(() => null);
+  if (!profileStat?.isFile() || profileStat.isSymbolicLink()) {
+    throw new Error("Wiki PROFILE.md is missing or unsafe.");
+  }
+  const files = ["PROFILE.md"];
+  for (const entry of await readdir(wikiRoot, { withFileTypes: true })) {
+    if (entry.name === "PROFILE.md" || entry.name === "_plan.md") continue;
+    if (entry.isSymbolicLink()) throw new Error(`Wiki contains an unsafe symlink: ${entry.name}`);
+    if (WIKI_IGNORED_FILES.has(entry.name) || /\.(?:lock|log|tmp)$/u.test(entry.name)) continue;
+    if (entry.isDirectory() && (entry.name === "resources" || WIKI_IGNORED_DIRS.has(entry.name))) continue;
+    if (entry.isFile() && entry.name.endsWith(".md")) {
+      files.push(entry.name);
+      continue;
+    }
+    throw new Error(`Wiki contains an unsupported root entry: ${entry.name}`);
+  }
+  const resources = join(wikiRoot, "resources");
+  const resourcesStat = await lstat(resources).catch(() => null);
+  if (resourcesStat?.isSymbolicLink()) throw new Error("Wiki resources directory is a symlink.");
+  if (resourcesStat?.isDirectory()) {
+    for (const entry of await readdir(resources, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) throw new Error(`Wiki contains an unsafe symlink: resources/${entry.name}`);
+      if (entry.isFile() && WIKI_RESOURCE_FILES.has(entry.name)) {
+        files.push(posix.join("resources", entry.name));
+        continue;
+      }
+      throw new Error(`Wiki contains an unsupported resource entry: resources/${entry.name}`);
+    }
+  }
+  return files.sort();
+}
+
+function validateWikiLinks(files, contents) {
+  const available = new Set(files);
+  for (const file of files) {
+    for (const match of contents.get(file).matchAll(/\[[^\]]*\]\(([^)]+)\)/gu)) {
+      const target = match[1].trim().split("#", 1)[0];
+      if (!target || /^(?:[a-z]+:|#)/iu.test(target)) continue;
+      const resolved = posix.normalize(posix.join(posix.dirname(file), target.replace(/^\.\//u, "")));
+      if (resolved.startsWith("../") || !available.has(resolved)) {
+        throw new Error(`Wiki link escapes or is missing: ${file} -> ${target}`);
+      }
+    }
+  }
+}
+
+function sanitizeWikiContent(content, repositoryRoot) {
+  const roots = new Set([String(repositoryRoot || "")]);
+  if (repositoryRoot.startsWith("/private/")) roots.add(repositoryRoot.slice(8));
+  else if (repositoryRoot.startsWith("/var/")) roots.add(`/private${repositoryRoot}`);
+  let sanitized = String(content || "");
+  for (const root of [...roots].filter(Boolean).sort((a, b) => b.length - a.length)) {
+    sanitized = sanitized.split(root).join(".");
+  }
+  return sanitized;
+}
+
+export async function prepareRepositoryUploadInputs(context, credentials, options = {}) {
+  if (!wikiUploadEnabled(options)) return { code: context, wiki: { status: "disabled" } };
+  const wikiRoot = join(context.root, WIKI_DIR);
+  const profile = await readFile(join(wikiRoot, "PROFILE.md"), "utf8").catch(() => "");
+  if (!profile) return { code: context, wiki: { status: "absent", root: wikiRoot } };
+  if (metadataValue(profile, "schema") !== WIKI_PROFILE_SCHEMA) {
+    return { code: context, wiki: { status: "invalid", reason: "unsupported-profile-schema", root: wikiRoot } };
+  }
+  const sourceCommit = metadataValue(profile, "local_head").toLowerCase();
+  const sourceTree = metadataValue(profile, "source_tree").toLowerCase();
+  if (!/^[0-9a-f]{40}$/u.test(sourceCommit) || !/^[0-9a-f]{40}$/u.test(sourceTree)) {
+    return { code: context, wiki: { status: "invalid", reason: "invalid-source-provenance", root: wikiRoot } };
+  }
+  const userId = await resolveEffectiveUserId(credentials, options.fetchImpl || globalThis.fetch);
+  if (!userId) return { code: context, wiki: { status: "invalid", reason: "user-id-unavailable", root: wikiRoot } };
+  try {
+    const files = await publicationFiles(wikiRoot);
+    const contents = new Map();
+    const digest = createHash("sha256");
+    for (const file of files) {
+      let content = await readFile(join(wikiRoot, ...file.split("/")), "utf8");
+      if (file !== "PROFILE.md" && !file.includes("/") && metadataValue(content, "schema") !== WIKI_PAGE_SCHEMA) {
+        throw new Error(`Wiki page has unsupported schema: ${file}`);
+      }
+      content = sanitizeWikiContent(content, context.root);
+      contents.set(file, content);
+      digest.update(file).update("\0").update(content).update("\0");
+    }
+    validateWikiLinks(files, contents);
+    return {
+      code: context,
+      wiki: {
+        status: "ready",
+        root: wikiRoot,
+        targetUri: `viking://resources/wiki/${context.repoId}/${userId}`,
+        repoId: context.repoId,
+        userId,
+        sourceCommit,
+        sourceTree,
+        sourceBranch: metadataValue(profile, "local_branch") || context.branch,
+        triggerCommit: context.commit,
+        triggerTree: context.tree,
+        buildMode: metadataValue(profile, "build_mode") || "unknown",
+        generatedAt: metadataValue(profile, "generated_at"),
+        files,
+        contents,
+        contentHash: digest.digest("hex"),
+      },
+    };
+  } catch (error) {
+    return { code: context, wiki: { status: "invalid", reason: error?.message || String(error), root: wikiRoot, sourceCommit } };
+  }
+}
+
+export async function createWikiArchive(context, wiki) {
+  if (wiki?.status !== "ready") throw new Error("Wiki is not ready for publication.");
+  const directory = await mkdtemp(join(tmpdir(), "openviking-repo-wiki-"));
+  const staging = join(directory, "publication");
+  const archive = join(directory, `${safePart(context.repoName, "repository")}-wiki.zip`);
+  await mkdir(staging, { recursive: true, mode: STATE_DIR_MODE });
+  try {
+    for (const file of wiki.files) {
+      const destination = join(staging, ...file.split("/"));
+      await mkdir(dirname(destination), { recursive: true, mode: STATE_DIR_MODE });
+      await writeFile(destination, wiki.contents.get(file), { encoding: "utf8", mode: STATE_FILE_MODE });
+    }
+    const manifest = {
+      schema: "repo_wiki_publication.v1", repo_id: context.repoId, repo_name: context.repoName,
+      repo_key: context.repoKey, wiki_owner: wiki.userId, source_commit: wiki.sourceCommit,
+      source_tree: wiki.sourceTree, source_branch: wiki.sourceBranch, build_mode: wiki.buildMode,
+      generated_at: wiki.generatedAt, files: wiki.files, content_hash: wiki.contentHash,
+    };
+    await writeFile(join(staging, "repo-wiki-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", mode: STATE_FILE_MODE });
+    await execFileAsync("python3", ["-m", "zipfile", "-c", archive, "."], { cwd: staging, timeout: 120_000, maxBuffer: 1024 * 1024 });
+    await chmod(archive, STATE_FILE_MODE);
+    return { archive, cleanup: () => rm(directory, { recursive: true, force: true }) };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 function authHeaders(credentials, contentType = "") {
@@ -312,34 +520,145 @@ export async function submitRepositorySnapshot(credentials, tempFileId, context)
   return responseResult(response);
 }
 
+export async function submitWikiSnapshot(credentials, tempFileId, wiki) {
+  const tags = [
+    "content_kind=repo_wiki",
+    `repo_id=${wiki.repoId}`,
+    `wiki_owner=${wiki.userId}`,
+    `source_commit=${wiki.sourceCommit}`,
+    `build_mode=${wiki.buildMode}`,
+    `content_hash=${wiki.contentHash}`,
+  ];
+  const response = await fetch(`${credentials.baseUrl}/api/v1/resources`, {
+    method: "POST",
+    headers: authHeaders(credentials, "application/json"),
+    body: JSON.stringify({
+      temp_file_id: tempFileId,
+      to: wiki.targetUri,
+      wait: false,
+      processing_mode: "vectors_only",
+      tags,
+      tag_mode: "replace",
+      args: { parse_mode: "no_split" },
+    }),
+  });
+  return responseResult(response);
+}
+
+function normalizedSyncState(previous, context) {
+  if (previous?.version === 2) return previous;
+  return {
+    version: 2,
+    repoKey: context.repoKey,
+    branch: context.branch,
+    code: previous?.lastSubmittedCommit ? {
+      lastSubmittedCommit: previous.lastSubmittedCommit,
+      targetUri: previous.targetUri || context.targetUri,
+      taskId: previous.taskId || "",
+      status: "submitted",
+    } : {},
+    wiki: {},
+    updatedAt: previous?.updatedAt || "",
+  };
+}
+
 export async function syncRepositoryFromHook(input, options = {}) {
   if (!isSuccessfulGitMutation(input)) return { status: "skipped", reason: "not-git-mutation" };
   const context = await resolveRepositoryContext(hookCwd(input));
-  if (context.remoteOrigin) return { status: "skipped", reason: "remote-backed", context };
 
   return withRepositoryLock(context, async () => {
-    const previous = await readState(context);
-    if (previous.lastSubmittedCommit === context.commit) {
-      return { status: "skipped", reason: "already-submitted", context };
+    const rawPrevious = await readState(context);
+    const previous = normalizedSyncState(rawPrevious, context);
+    const credentials = options.credentials || resolveOpenVikingCredentials();
+    const inputs = await prepareRepositoryUploadInputs(context, credentials, options);
+    const codeNeeded = !context.remoteOrigin && previous.code?.lastSubmittedCommit !== context.commit;
+    const wikiNeeded = inputs.wiki.status === "ready"
+      && (previous.wiki?.contentHash !== inputs.wiki.contentHash
+        || previous.wiki?.status !== "submitted");
+
+    if (!codeNeeded && !wikiNeeded) {
+      const wikiReason = inputs.wiki.reason || inputs.wiki.status;
+      if (rawPrevious?.version !== 2 || previous.wiki?.status !== inputs.wiki.status
+          || previous.wiki?.reason !== wikiReason) {
+        await writeState(context, {
+          ...previous,
+          wiki: { ...previous.wiki, status: inputs.wiki.status, reason: wikiReason },
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      return {
+        status: "skipped",
+        reason: context.remoteOrigin && inputs.wiki.status === "disabled"
+          ? "remote-backed"
+          : (inputs.wiki.status === "disabled" ? "already-submitted" : "nothing-to-submit"),
+        context,
+        code: { status: "skipped", reason: context.remoteOrigin ? "remote-backed" : "already-submitted" },
+        wiki: { status: "skipped", reason: wikiReason },
+      };
     }
 
-    const credentials = options.credentials || resolveOpenVikingCredentials();
-    const bundle = await createRepositoryArchive(context);
-    try {
-      const tempFileId = await uploadRepositorySnapshot(credentials, bundle.archive);
-      const result = await submitRepositorySnapshot(credentials, tempFileId, context);
-      await writeState(context, {
-        version: 1,
-        repoKey: context.repoKey,
-        branch: context.branch,
-        targetUri: context.targetUri,
-        lastSubmittedCommit: context.commit,
-        taskId: result.task_id || "",
-        updatedAt: new Date().toISOString(),
-      });
-      return { status: "submitted", context, result };
-    } finally {
-      await bundle.cleanup();
-    }
+    const codePromise = codeNeeded ? (async () => {
+      const bundle = await createRepositoryArchive(context);
+      try {
+        const tempFileId = await uploadRepositorySnapshot(credentials, bundle.archive);
+        const result = await submitRepositorySnapshot(credentials, tempFileId, context);
+        return { status: "submitted", result };
+      } finally {
+        await bundle.cleanup();
+      }
+    })() : Promise.resolve({ status: "skipped", reason: context.remoteOrigin ? "remote-backed" : "already-submitted" });
+
+    const wikiPromise = wikiNeeded ? (async () => {
+      const bundle = await createWikiArchive(context, inputs.wiki);
+      try {
+        const tempFileId = await uploadRepositorySnapshot(credentials, bundle.archive);
+        const result = await submitWikiSnapshot(credentials, tempFileId, inputs.wiki);
+        return { status: "submitted", result };
+      } finally {
+        await bundle.cleanup();
+      }
+    })() : Promise.resolve({ status: "skipped", reason: inputs.wiki.status });
+
+    const [codeSettled, wikiSettled] = await Promise.allSettled([codePromise, wikiPromise]);
+    const code = codeSettled.status === "fulfilled"
+      ? codeSettled.value
+      : { status: "failed", error: codeSettled.reason?.message || String(codeSettled.reason) };
+    const wiki = wikiSettled.status === "fulfilled"
+      ? wikiSettled.value
+      : { status: "failed", error: wikiSettled.reason?.message || String(wikiSettled.reason) };
+
+    const next = {
+      ...previous,
+      version: 2,
+      repoKey: context.repoKey,
+      branch: context.branch,
+      code: code.status === "submitted" ? {
+        lastSubmittedCommit: context.commit, targetUri: context.targetUri,
+        taskId: code.result?.task_id || "", status: "submitted",
+      } : code.status === "skipped" ? previous.code : {
+        ...previous.code, status: code.status, ...(code.error ? { error: code.error } : {}),
+      },
+      wiki: wiki.status === "submitted" ? {
+        contentHash: inputs.wiki.contentHash, targetUri: inputs.wiki.targetUri,
+        taskId: wiki.result?.task_id || "", status: "submitted",
+      } : wiki.status === "skipped" && inputs.wiki.status === "ready" ? previous.wiki : {
+        ...previous.wiki,
+        ...(inputs.wiki.contentHash ? { contentHash: inputs.wiki.contentHash } : {}),
+        ...(inputs.wiki.targetUri ? { targetUri: inputs.wiki.targetUri } : {}),
+        status: wiki.status === "skipped" ? inputs.wiki.status : wiki.status,
+        ...((inputs.wiki.reason || (wiki.status === "skipped" ? inputs.wiki.status : ""))
+          ? { reason: inputs.wiki.reason || inputs.wiki.status } : {}),
+        ...(wiki.error ? { error: wiki.error } : {}),
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    await writeState(context, next);
+
+    const submitted = code.status === "submitted" || wiki.status === "submitted";
+    const failed = code.status === "failed" || wiki.status === "failed";
+    return {
+      status: failed ? (submitted ? "partial" : "error") : (submitted ? "submitted" : "skipped"),
+      context, code, wiki, result: code.result,
+    };
   });
 }

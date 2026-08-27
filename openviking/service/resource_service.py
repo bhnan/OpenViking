@@ -19,6 +19,10 @@ from uuid import uuid4
 
 from openviking.core.content_targets import ContentTargetSpec
 from openviking.core.uri_validation import validate_optional_content_target_uri
+from openviking.parse.accessors.git_accessor import (
+    GIT_LOCAL_ARG,
+    normalize_git_local_config,
+)
 from openviking.parse.mode import ParseMode, normalize_parse_mode
 from openviking.parse.parsers.constants import MPEG_TS_EXTENSION_ALIAS
 from openviking.resource.feishu_watch_auth import (
@@ -349,6 +353,16 @@ class ResourceService:
             parse_mode = normalize_parse_mode(raw_parse_mode)
         except InvalidArgumentError as exc:
             raise InvalidArgumentError(str(exc).replace("parse_mode", "args.parse_mode")) from exc
+        if GIT_LOCAL_ARG in normalized:
+            if watch_interval > 0:
+                raise InvalidArgumentError(
+                    "args.git_local cannot be combined with watch_interval > 0: "
+                    "uploaded repository snapshots are one-time sources."
+                )
+            try:
+                normalized[GIT_LOCAL_ARG] = normalize_git_local_config(normalized[GIT_LOCAL_ARG])
+            except ValueError as exc:
+                raise InvalidArgumentError(str(exc)) from exc
         token = normalized.get(FEISHU_ACCESS_TOKEN_ARG)
         refresh_token = normalized.pop(FEISHU_REFRESH_TOKEN_ARG, None)
         watch_auth_state = None
@@ -981,6 +995,19 @@ class ResourceService:
             else normalized_args.parse_mode
         )
         kwargs.update(normalized_args.processor_kwargs)
+        if GIT_LOCAL_ARG in normalized_args.processor_kwargs:
+            if add_type is not None:
+                raise InvalidArgumentError("args.git_local cannot be combined with add_type.")
+            if not kwargs.get("temp_file_id"):
+                raise InvalidArgumentError(
+                    "args.git_local requires a repository archive supplied via temp_file_id."
+                )
+            if not to or parent:
+                raise InvalidArgumentError(
+                    "args.git_local requires an exact to target and cannot use parent."
+                )
+            if Path(path).suffix.lower() != ".zip":
+                raise InvalidArgumentError("args.git_local requires a ZIP repository archive.")
         git_repo_source = is_git_repo_url(path)
         if watch_interval > 0 and kwargs.get("temp_file_id"):
             # Fail fast, before any ingestion: an uploaded source is a one-time

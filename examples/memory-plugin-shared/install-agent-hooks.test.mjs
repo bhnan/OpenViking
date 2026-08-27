@@ -99,7 +99,19 @@ test("TRAE CLI install preserves unrelated config and is idempotent", () => {
       hooks.hooks.PreToolUse.filter((entry) => JSON.stringify(entry).includes("uri-guard.mjs")).length,
       1,
     );
+    assert.equal(
+      hooks.hooks.PostToolUse.filter((entry) => JSON.stringify(entry).includes("repository-sync.mjs")).length,
+      1,
+    );
+    const repositorySyncHook = hooks.hooks.PostToolUse.find(
+      (entry) => JSON.stringify(entry).includes("repository-sync.mjs"),
+    );
+    assert.equal(
+      repositorySyncHook?.matcher,
+      "Bash|RunCommand|Shell|exec_command|codex_exec",
+    );
     assert.ok(JSON.stringify(hooks).includes("OPENVIKING_HOOK_SOURCE='trae-cli'"));
+    assert.ok(JSON.stringify(hooks).includes("OPENVIKING_CLI_CONFIG_FILE="));
 
     const config = readFileSync(configPath, "utf8");
     assert.match(config, /model = "test-model"/);
@@ -174,7 +186,16 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
       { hooks: [{ type: "command", command: "third-party trae" }] },
       { hooks: [{ type: "command", command: "OPENVIKING_HOOK_SOURCE=trae node /tmp/openviking/claude-code-memory-plugin/scripts/trae-auto-capture.mjs" }] },
     ] } });
-    writeJson(traeCnHooks, { version: 1, hooks: { Stop: [{ hooks: [{ type: "command", command: "third-party trae-cn" }] }] } });
+    writeJson(traeCnHooks, { version: 1, hooks: { Stop: [
+      { hooks: [{ type: "command", command: "third-party trae-cn" }] },
+    ], PreToolUse: [
+      {
+        hooks: [{
+          type: "command",
+          command: "OPENVIKING_HOOK_SOURCE=trae-cn node /tmp/openviking/scripts/uri-guard.mjs",
+        }],
+      },
+    ] } });
     writeJson(cursorMcpPath, { mcpServers: {
       "ov-mcp-server": { url: "https://example.com/mcp" },
       "third-party": { url: "https://third-party.example/mcp" },
@@ -204,18 +225,80 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
     assert.equal(cursor.hooks.beforeShellExecution.filter((entry) => entry.command.includes("uri-guard.mjs")).length, 1);
     assert.equal(Boolean(cursor.hooks.postToolUse), false);
 
-    for (const [file, label] of [[traeHooks, "trae"], [traeCnHooks, "trae-cn"]]) {
-      const config = JSON.parse(readFileSync(file, "utf8"));
-      assert.equal(config.hooks.Stop.filter((entry) => JSON.stringify(entry).includes("auto-capture.mjs")).length, 1, label);
-      assert.ok(config.hooks.Stop.some((entry) => JSON.stringify(entry).includes(`third-party ${label}`)), label);
-      assert.equal(config.hooks.Stop.some((entry) => JSON.stringify(entry).includes("trae-auto-capture.mjs")), false, label);
-      assert.ok(config.hooks.Stop.some((entry) => JSON.stringify(entry).includes(`OPENVIKING_HOOK_SOURCE='${label}'`)), label);
-      assert.equal(
-        config.hooks.PreToolUse.filter((entry) => JSON.stringify(entry).includes("uri-guard.mjs")).length,
-        1,
-        label,
-      );
-    }
+    const traeDesktopHooks = JSON.parse(readFileSync(traeHooks, "utf8"));
+    assert.equal(
+      traeDesktopHooks.hooks.Stop.filter(
+        (entry) => JSON.stringify(entry).includes("auto-capture.mjs"),
+      ).length,
+      1,
+    );
+    assert.ok(
+      traeDesktopHooks.hooks.Stop.some(
+        (entry) => JSON.stringify(entry).includes("third-party trae"),
+      ),
+    );
+    assert.equal(
+      traeDesktopHooks.hooks.Stop.some(
+        (entry) => JSON.stringify(entry).includes("trae-auto-capture.mjs"),
+      ),
+      false,
+    );
+    assert.ok(
+      traeDesktopHooks.hooks.Stop.some(
+        (entry) => JSON.stringify(entry).includes("OPENVIKING_HOOK_SOURCE='trae'"),
+      ),
+    );
+    assert.ok(
+      traeDesktopHooks.hooks.Stop.some(
+        (entry) => JSON.stringify(entry).includes("OPENVIKING_CLI_CONFIG_FILE="),
+      ),
+    );
+    assert.equal(
+      traeDesktopHooks.hooks.PreToolUse.filter(
+        (entry) => JSON.stringify(entry).includes("uri-guard.mjs"),
+      ).length,
+      1,
+    );
+    assert.equal(
+      traeDesktopHooks.hooks.PostToolUse.filter(
+        (entry) => JSON.stringify(entry).includes("repository-sync.mjs"),
+      ).length,
+      1,
+    );
+    const traeCnConfig = JSON.parse(readFileSync(traeCnHooks, "utf8"));
+    assert.equal(
+      traeCnConfig.hooks.Stop.filter(
+        (entry) => JSON.stringify(entry).includes("auto-capture.mjs"),
+      ).length,
+      1,
+    );
+    assert.ok(
+      traeCnConfig.hooks.Stop.some(
+        (entry) => JSON.stringify(entry).includes("third-party trae-cn"),
+      ),
+    );
+    assert.ok(
+      traeCnConfig.hooks.Stop.some(
+        (entry) => JSON.stringify(entry).includes("OPENVIKING_HOOK_SOURCE='trae-cn'"),
+      ),
+    );
+    assert.ok(
+      traeCnConfig.hooks.Stop.some(
+        (entry) => JSON.stringify(entry).includes("OPENVIKING_CLI_CONFIG_FILE="),
+      ),
+    );
+    assert.equal(
+      traeCnConfig.hooks.PreToolUse.filter(
+        (entry) => JSON.stringify(entry).includes("uri-guard.mjs"),
+      ).length,
+      1,
+    );
+    assert.equal(
+      traeCnConfig.hooks.PostToolUse.filter(
+        (entry) => JSON.stringify(entry).includes("repository-sync.mjs"),
+      ).length,
+      1,
+    );
 
     const cursorServers = JSON.parse(readFileSync(cursorMcpPath, "utf8")).mcpServers;
     const cursorMcp = cursorServers.openviking;
@@ -231,6 +314,8 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
     assert.ok(existsSync(join(shared, "agent-uri-guard.mjs")));
     assert.ok(existsSync(join(shared, "batch-send.mjs")));
     assert.ok(existsSync(join(shared, "mcp-proxy-core.mjs")));
+    assert.ok(existsSync(join(shared, "async-writer.mjs")));
+    assert.ok(existsSync(join(shared, "repository-sync.mjs")));
     assert.ok(existsSync(join(shared, "uri-guard.mjs")));
     for (const client of ["cursor", "trae", "trae-cn"]) {
       const manifest = JSON.parse(readFileSync(join(home, ".openviking", "agent-integrations", client, "integration.json"), "utf8"));
@@ -277,6 +362,24 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
       assert.equal(guarded.status, 0, `${client}: ${guarded.stderr}`);
       assert.match(guarded.stdout, /deny/, `${client}: ${guarded.stderr}`);
     }
+    for (const client of ["trae", "trae-cn"]) {
+      const repositoryHook = join(
+        home,
+        ".openviking",
+        "agent-integrations",
+        client,
+        "scripts",
+        "repository-sync.mjs",
+      );
+      assert.ok(existsSync(repositoryHook), client);
+      const smoke = spawnSync(process.execPath, [repositoryHook, client], {
+        env: { ...process.env, HOME: home, OPENVIKING_GIT_LOCAL_ENABLED: "0" },
+        input: "{}",
+        encoding: "utf8",
+      });
+      assert.equal(smoke.status, 0, `${client}: ${smoke.stderr}`);
+      assert.deepEqual(JSON.parse(smoke.stdout), {});
+    }
     const traeMcp = process.platform === "darwin"
       ? join(home, "Library", "Application Support", "Trae", "User", "mcp.json")
       : join(home, ".trae", "mcp.json");
@@ -300,6 +403,17 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
     assert.equal(Boolean(JSON.parse(readFileSync(traeMcp, "utf8")).mcpServers.openviking), false);
     assert.equal(Boolean(JSON.parse(readFileSync(traeCnMcp, "utf8")).mcpServers.openviking), false);
     assert.ok(JSON.parse(readFileSync(traeCnMcp, "utf8")).mcpServers["third-party"]);
+    assert.ok(
+      JSON.parse(readFileSync(traeCnHooks, "utf8")).hooks.Stop.some(
+        (entry) => JSON.stringify(entry).includes("third-party trae-cn"),
+      ),
+    );
+    assert.equal(
+      JSON.parse(readFileSync(traeCnHooks, "utf8")).hooks.Stop.some(
+        (entry) => JSON.stringify(entry).includes("auto-capture.mjs"),
+      ),
+      false,
+    );
     assert.equal(existsSync(join(home, ".openviking", "agent-integrations", "memory-plugin-shared")), false);
   } finally {
     rmSync(home, { recursive: true, force: true });

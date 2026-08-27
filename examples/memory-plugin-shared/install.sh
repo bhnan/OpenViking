@@ -1774,6 +1774,7 @@ assemble_agent_integration() { # assemble_agent_integration <source-subdir> <des
     agent-hook-runtime.mjs agent-uri-guard.mjs credentials.mjs debug-log.mjs \
     batch-send.mjs mcp-proxy-core.mjs pending-queue.mjs plugin-config.mjs profile-inject.mjs \
     retryable.mjs \
+    async-writer.mjs repository-sync.mjs \
     recall-compress-core.mjs recall-core.mjs \
     session-model.mjs uri-guard.mjs workspace-peer.mjs; do
     cp "$shared/lib/$file" "$shared_dest.tmp/$file"
@@ -1786,10 +1787,10 @@ assemble_agent_integration() { # assemble_agent_integration <source-subdir> <des
 
 agent_write_json_configs() { # agent_write_json_configs <kind> <hooks> <mcp> <root> <client-id> <node-bin>
   local kind="$1" hooks_path="$2" mcp_path="$3" root="$4" client_id="$5" node_bin="$6"
-  "$NODE_BIN" - "$kind" "$hooks_path" "$mcp_path" "$root" "$client_id" "$node_bin" "$SOURCE_MODE" <<'NODE'
+  "$NODE_BIN" - "$kind" "$hooks_path" "$mcp_path" "$root" "$client_id" "$node_bin" "$SOURCE_MODE" "$OVCLI_CONF" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
-const [kind, hooksPath, mcpPath, root, clientId, nodeBin, sourceMode] = process.argv.slice(2);
+const [kind, hooksPath, mcpPath, root, clientId, nodeBin, sourceMode, ovcliConfig] = process.argv.slice(2);
 
 function readJson(file) {
   if (!fs.existsSync(file)) return {};
@@ -1829,6 +1830,8 @@ function isOpenVikingHook(value) {
     "session-start.mjs",
     "auto-recall.mjs",
     "auto-capture.mjs",
+    "repository-sync.mjs",
+    "uri-guard.mjs",
     "pre-compact.mjs",
     "session-end.mjs",
     "trae-auto-recall.mjs",
@@ -1846,6 +1849,7 @@ const integrationEnv = {
   OPENVIKING_INTEGRATION_ID: packageManifest.id,
   OPENVIKING_INTEGRATION_VERSION: packageManifest.version,
   OPENVIKING_HOOK_SOURCE: clientId,
+  OPENVIKING_CLI_CONFIG_FILE: ovcliConfig,
 };
 const envPrefix = Object.entries(integrationEnv)
   .map(([key, value]) => `${key}=${shellArg(value)}`)
@@ -1967,10 +1971,10 @@ NODE
 
 agent_write_trae_cli_configs() { # agent_write_trae_cli_configs <hooks> <traecli.toml> <root> <node-bin>
   local hooks_path="$1" config_path="$2" root="$3" node_bin="$4"
-  "$NODE_BIN" - "$hooks_path" "$config_path" "$root" "$node_bin" "$SOURCE_MODE" <<'NODE'
+  "$NODE_BIN" - "$hooks_path" "$config_path" "$root" "$node_bin" "$SOURCE_MODE" "$OVCLI_CONF" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
-const [hooksPath, configPath, root, nodeBin, sourceMode] = process.argv.slice(2);
+const [hooksPath, configPath, root, nodeBin, sourceMode, ovcliConfig] = process.argv.slice(2);
 const clientId = "trae-cli";
 const serverName = "openviking-memory";
 
@@ -2006,6 +2010,7 @@ function isOpenVikingHook(value) {
       "session-start.mjs",
       "auto-recall.mjs",
       "auto-capture.mjs",
+      "repository-sync.mjs",
       "uri-guard.mjs",
     ].some((name) => text.includes(name)));
 }
@@ -2045,6 +2050,7 @@ const integrationEnv = {
   OPENVIKING_INTEGRATION_ID: manifest.id,
   OPENVIKING_INTEGRATION_VERSION: manifest.version,
   OPENVIKING_HOOK_SOURCE: clientId,
+  OPENVIKING_CLI_CONFIG_FILE: ovcliConfig,
 };
 const envPrefix = Object.entries(integrationEnv)
   .map(([key, value]) => `${key}=${shellArg(value)}`)
@@ -2138,6 +2144,7 @@ function ownsHook(value) {
       "session-start.mjs",
       "auto-recall.mjs",
       "auto-capture.mjs",
+      "repository-sync.mjs",
       "uri-guard.mjs",
     ].some((name) => text.includes(name)));
 }
@@ -2199,6 +2206,8 @@ function ownsHook(value) {
     "session-start.mjs",
     "auto-recall.mjs",
     "auto-capture.mjs",
+    "repository-sync.mjs",
+    "uri-guard.mjs",
     "pre-compact.mjs",
     "session-end.mjs",
     "trae-auto-recall.mjs",
@@ -2235,12 +2244,12 @@ uninstall_agent_integrations() {
     info "$(t 'Removed the Cursor OpenViking integration.' '已移除 Cursor OpenViking 集成。')"
   fi
   if contains_harness trae; then
-    agent_remove_json_configs "$HOME/.trae/hooks.json" "$(trae_mcp_path trae)"
+    agent_remove_json_configs "$(trae_hooks_path trae)" "$(trae_mcp_path trae)"
     rm -rf "$OV_HOME/agent-integrations/trae"
     info "$(t 'Removed TRAE OpenViking hooks and MCP config.' '已移除 TRAE OpenViking hooks 与 MCP 配置。')"
   fi
   if contains_harness trae-cn; then
-    agent_remove_json_configs "$HOME/.trae-cn/hooks.json" "$(trae_mcp_path trae-cn)"
+    agent_remove_json_configs "$(trae_hooks_path trae-cn)" "$(trae_mcp_path trae-cn)"
     rm -rf "$OV_HOME/agent-integrations/trae-cn"
     info "$(t 'Removed TRAE CN OpenViking hooks and MCP config.' '已移除 TRAE CN OpenViking hooks 与 MCP 配置。')"
   fi
@@ -2305,6 +2314,15 @@ CLEAN_NODE
 
 cursor_mcp_path() {
   printf '%s' "$HOME/.cursor/mcp.json"
+}
+
+trae_hooks_path() { # trae_hooks_path <trae|trae-cn>
+  local client_id="$1"
+  if [ "$client_id" = "trae-cn" ]; then
+    printf '%s' "$HOME/.trae-cn/hooks.json"
+  else
+    printf '%s' "$HOME/.trae/hooks.json"
+  fi
 }
 
 cursor_legacy_claude_plugins() {
@@ -2456,7 +2474,7 @@ install_zcode() {
 install_trae_variant() { # install_trae_variant <trae|trae-cn>
   local client_id="$1" root hooks_path mcp_path
   root="$(assemble_agent_integration trae-memory-hooks "$client_id")" || return 1
-  hooks_path="$HOME/.$client_id/hooks.json"
+  hooks_path="$(trae_hooks_path "$client_id")"
   mcp_path="$(trae_mcp_path "$client_id")"
   agent_write_json_configs trae "$hooks_path" "$mcp_path" "$root" "$client_id" "$NODE_BIN"
   info "$client_id hooks: $hooks_path"
@@ -3003,20 +3021,25 @@ EOF
     fi
   fi
   if contains_harness trae; then
-    local trae_mcp
+    local trae_hooks trae_mcp
+    trae_hooks="$(trae_hooks_path trae)"
     trae_mcp="$(trae_mcp_path trae)"
-    if grep -q 'scripts/session-start.mjs' "$HOME/.trae/hooks.json" 2>/dev/null \
-      && grep -q 'scripts/auto-recall.mjs' "$HOME/.trae/hooks.json" 2>/dev/null \
-      && grep -q 'scripts/auto-capture.mjs' "$HOME/.trae/hooks.json" 2>/dev/null \
-      && grep -q 'scripts/uri-guard.mjs' "$HOME/.trae/hooks.json" 2>/dev/null \
-      && grep -q 'OPENVIKING_INTEGRATION_ID' "$HOME/.trae/hooks.json" 2>/dev/null \
+    if grep -q 'scripts/session-start.mjs' "$trae_hooks" 2>/dev/null \
+      && grep -q 'scripts/auto-recall.mjs' "$trae_hooks" 2>/dev/null \
+      && grep -q 'scripts/auto-capture.mjs' "$trae_hooks" 2>/dev/null \
+      && grep -q 'scripts/uri-guard.mjs' "$trae_hooks" 2>/dev/null \
+      && grep -q 'scripts/repository-sync.mjs' "$trae_hooks" 2>/dev/null \
+      && grep -q 'OPENVIKING_INTEGRATION_ID' "$trae_hooks" 2>/dev/null \
       && grep -q 'mcp-proxy.mjs' "$trae_mcp" 2>/dev/null \
       && [ -f "$OV_HOME/agent-integrations/trae/scripts/trae-hook.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae/scripts/uri-guard.mjs" ] \
+      && [ -f "$OV_HOME/agent-integrations/trae/scripts/repository-sync.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae/integration.json" ]; then
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae/scripts/trae-hook.mjs" \
         || { ok=0; agent_fatal=1; }
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae/scripts/uri-guard.mjs" \
+        || { ok=0; agent_fatal=1; }
+      "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae/scripts/repository-sync.mjs" \
         || { ok=0; agent_fatal=1; }
       if ! printf '%s' '{}' | env HOME="$HOME" OPENVIKING_MEMORY_ENABLED=0 \
         "$NODE_BIN" "$OV_HOME/agent-integrations/trae/scripts/session-start.mjs" trae >/dev/null; then
@@ -3030,20 +3053,25 @@ EOF
     fi
   fi
   if contains_harness trae-cn; then
-    local trae_cn_mcp
+    local trae_cn_hooks trae_cn_mcp
+    trae_cn_hooks="$(trae_hooks_path trae-cn)"
     trae_cn_mcp="$(trae_mcp_path trae-cn)"
-    if grep -q 'scripts/session-start.mjs' "$HOME/.trae-cn/hooks.json" 2>/dev/null \
-      && grep -q 'scripts/auto-recall.mjs' "$HOME/.trae-cn/hooks.json" 2>/dev/null \
-      && grep -q 'scripts/auto-capture.mjs' "$HOME/.trae-cn/hooks.json" 2>/dev/null \
-      && grep -q 'scripts/uri-guard.mjs' "$HOME/.trae-cn/hooks.json" 2>/dev/null \
-      && grep -q 'OPENVIKING_INTEGRATION_ID' "$HOME/.trae-cn/hooks.json" 2>/dev/null \
+    if grep -q 'scripts/session-start.mjs' "$trae_cn_hooks" 2>/dev/null \
+      && grep -q 'scripts/auto-recall.mjs' "$trae_cn_hooks" 2>/dev/null \
+      && grep -q 'scripts/auto-capture.mjs' "$trae_cn_hooks" 2>/dev/null \
+      && grep -q 'scripts/uri-guard.mjs' "$trae_cn_hooks" 2>/dev/null \
+      && grep -q 'scripts/repository-sync.mjs' "$trae_cn_hooks" 2>/dev/null \
+      && grep -q 'OPENVIKING_INTEGRATION_ID' "$trae_cn_hooks" 2>/dev/null \
       && grep -q 'mcp-proxy.mjs' "$trae_cn_mcp" 2>/dev/null \
       && [ -f "$OV_HOME/agent-integrations/trae-cn/scripts/trae-hook.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae-cn/scripts/uri-guard.mjs" ] \
+      && [ -f "$OV_HOME/agent-integrations/trae-cn/scripts/repository-sync.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae-cn/integration.json" ]; then
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae-cn/scripts/trae-hook.mjs" \
         || { ok=0; agent_fatal=1; }
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae-cn/scripts/uri-guard.mjs" \
+        || { ok=0; agent_fatal=1; }
+      "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae-cn/scripts/repository-sync.mjs" \
         || { ok=0; agent_fatal=1; }
       if ! printf '%s' '{}' | env HOME="$HOME" OPENVIKING_MEMORY_ENABLED=0 \
         "$NODE_BIN" "$OV_HOME/agent-integrations/trae-cn/scripts/session-start.mjs" trae-cn >/dev/null; then
@@ -3065,15 +3093,19 @@ EOF
       && grep -q 'scripts/auto-recall.mjs' "$trae_cli_hooks" 2>/dev/null \
       && grep -q 'scripts/auto-capture.mjs' "$trae_cli_hooks" 2>/dev/null \
       && grep -q 'scripts/uri-guard.mjs' "$trae_cli_hooks" 2>/dev/null \
+      && grep -q 'scripts/repository-sync.mjs' "$trae_cli_hooks" 2>/dev/null \
       && grep -q 'OPENVIKING_INTEGRATION_ID' "$trae_cli_hooks" 2>/dev/null \
       && grep -q '\[mcp_servers."openviking-memory"\]' "$trae_cli_config" 2>/dev/null \
       && grep -q 'mcp-proxy.mjs' "$trae_cli_config" 2>/dev/null \
       && [ -f "$OV_HOME/agent-integrations/trae-cli/scripts/trae-cli-hook.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae-cli/scripts/uri-guard.mjs" ] \
+      && [ -f "$OV_HOME/agent-integrations/trae-cli/scripts/repository-sync.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae-cli/integration.json" ]; then
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae-cli/scripts/trae-cli-hook.mjs" \
         || { ok=0; agent_fatal=1; }
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae-cli/scripts/uri-guard.mjs" \
+        || { ok=0; agent_fatal=1; }
+      "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae-cli/scripts/repository-sync.mjs" \
         || { ok=0; agent_fatal=1; }
       if ! printf '%s' '{}' | env HOME="$HOME" OPENVIKING_MEMORY_ENABLED=0 \
         "$NODE_BIN" "$OV_HOME/agent-integrations/trae-cli/scripts/session-start.mjs" >/dev/null; then

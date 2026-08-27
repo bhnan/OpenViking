@@ -4,7 +4,7 @@ Give TRAE, TRAE CN, and TRAE CLI long-term memory across projects and sessions. 
 
 ## Install
 
-Prerequisites: macOS or Linux, Node.js 18+, and a TRAE/TRAE CN release that supports the `SessionStart`, `UserPromptSubmit`, `PreToolUse`, and `Stop` Hooks. TRAE CLI additionally needs a version that exposes those lifecycle hooks and can show its effective Hook and MCP sources through `/hooks` and `/mcp` (or `traecli mcp list`). The installer guides you through the OpenViking connection settings.
+Prerequisites: macOS or Linux, Node.js 18+, and a TRAE/TRAE CN release that supports the `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, and `Stop` Hooks. TRAE CLI additionally needs a version that exposes those lifecycle hooks and can show its effective Hook and MCP sources through `/hooks` and `/mcp` (or `traecli mcp list`). The installer guides you through the OpenViking connection settings.
 
 When prompted for the connection, Volcengine Cloud users should select **Volcengine OpenViking Cloud** and enter their API key. Select **Self-hosted / local** only when an OpenViking server is running locally.
 
@@ -39,11 +39,17 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 
 Quit and restart the corresponding client after installation.
 
+TRAE reads global Hooks from `~/.trae/hooks.json`; TRAE CN reads them from
+`~/.trae-cn/hooks.json`. After installation, open the client's configured Hooks
+page, review the security notice, and enable the configuration. Hooks remain
+inactive until that trust step is completed.
+
 ## What gets installed
 
 - `SessionStart` loads your profile and current project memory.
 - `UserPromptSubmit` recalls and injects context for the current request.
 - `PreToolUse` redirects accidental local access to `viking://` paths back to OpenViking MCP tools.
+- `PostToolUse` uploads the committed `HEAD` after successful Git commands that can change it. Read-only commands such as `git status` and `git diff` do not upload.
 - `Stop` captures and immediately commits the completed turn, including short sessions.
 - The OpenViking MCP server provides explicit tools such as `search`, `recall`, `read`, and `remember`.
 

@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { fetchFileContent } from '../-lib/api'
 import type { VikingFsEntry } from '../-types/viking-fm'
-import { useVikingFilePreview } from './viking-fm'
+import { useInvalidateVikingFs, useVikingFilePreview } from './viking-fm'
 
 vi.mock('../-lib/api', () => {
   return {
@@ -78,5 +78,65 @@ describe('useVikingFilePreview', () => {
     })
     expect(result.current.preview?.content).toBe('{"loaded":true}')
     expect(fetchFileContent).toHaveBeenCalledOnce()
+  })
+})
+
+describe('useInvalidateVikingFs', () => {
+  it('invalidates every filesystem query family', async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(['viking-fs-ls', 'viking://resources/'], {})
+    queryClient.setQueryData(
+      ['viking-fs-ls', 'viking://resources/local-git/'],
+      {},
+    )
+    queryClient.setQueryData(['viking-fs-tree', 'viking://resources/'], {})
+    queryClient.setQueryData(
+      ['viking-file-read', 'viking://resources/readme.md'],
+      {},
+    )
+    queryClient.setQueryData(['unrelated-query'], {})
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+    const wrapper = ({ children }: PropsWithChildren) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const { result } = renderHook(() => useInvalidateVikingFs(), { wrapper })
+
+    await act(async () => {
+      await result.current.invalidateAll()
+    })
+
+    expect(invalidateSpy).toHaveBeenCalledTimes(3)
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ['viking-fs-ls'],
+    })
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ['viking-fs-tree'],
+    })
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ['viking-file-read'],
+    })
+    expect(
+      queryClient.getQueryState(['viking-fs-ls', 'viking://resources/'])
+        ?.isInvalidated,
+    ).toBe(true)
+    expect(
+      queryClient.getQueryState([
+        'viking-fs-ls',
+        'viking://resources/local-git/',
+      ])?.isInvalidated,
+    ).toBe(true)
+    expect(
+      queryClient.getQueryState(['viking-fs-tree', 'viking://resources/'])
+        ?.isInvalidated,
+    ).toBe(true)
+    expect(
+      queryClient.getQueryState([
+        'viking-file-read',
+        'viking://resources/readme.md',
+      ])?.isInvalidated,
+    ).toBe(true)
+    expect(queryClient.getQueryState(['unrelated-query'])?.isInvalidated).toBe(
+      false,
+    )
   })
 })

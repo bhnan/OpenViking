@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import { resolveTraeClient } from "./trae-client.mjs";
 import { buildTraeTurns, cleanTraeText } from "./trae-turns.mjs";
 import { evaluateTraeUriGuard } from "./uri-guard.mjs";
 
@@ -21,7 +22,9 @@ test("TRAE integration contains native Hook and MCP declarations", () => {
     "scripts/session-start.mjs",
     "scripts/auto-recall.mjs",
     "scripts/auto-capture.mjs",
+    "scripts/trae-client.mjs",
     "scripts/uri-guard.mjs",
+    "scripts/repository-sync.mjs",
   ]) {
     assert.ok(existsSync(join(pluginRoot, file)), `${file} must exist`);
   }
@@ -32,8 +35,10 @@ test("TRAE integration contains native Hook and MCP declarations", () => {
     "SessionStart",
     "UserPromptSubmit",
     "PreToolUse",
+    "PostToolUse",
     "Stop",
   ]);
+  assert.ok(integration.capabilities.includes("git-local"));
 });
 
 test("TRAE URI guard follows the Claude Code PreToolUse response contract", () => {
@@ -87,6 +92,18 @@ test("TRAE capture uses event fields rather than a transcript path", () => {
 
 test("TRAE capture removes previously injected memory blocks", () => {
   assert.equal(cleanTraeText("before<openviking-context>secret</openviking-context>after"), "beforeafter");
+});
+
+test("TRAE desktop hooks resolve the client from the running product channel", () => {
+  assert.equal(resolveTraeClient({
+    TRAE_CONFIG_CHANNEL: "trae-cn-config-channel",
+    OPENVIKING_HOOK_SOURCE: "trae",
+  }), "trae-cn");
+  assert.equal(resolveTraeClient({
+    TRAE_CONFIG_CHANNEL: "trae-config-channel",
+    OPENVIKING_HOOK_SOURCE: "trae-cn",
+  }), "trae");
+  assert.equal(resolveTraeClient({ OPENVIKING_HOOK_SOURCE: "trae-cn" }), "trae-cn");
 });
 
 test("TRAE prompt hook injects recall and Stop captures dedicated event fields", async () => {

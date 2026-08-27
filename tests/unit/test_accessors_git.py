@@ -5,6 +5,7 @@
 import asyncio
 import base64
 import os
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -12,6 +13,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from openviking.parse.accessors import GitAccessor
+from openviking.parse.accessors.base import SourceType
 from openviking.parse.parsers.directory import DirectoryParser
 from openviking.utils import code_hosting_utils
 from openviking.utils.git_auth import (
@@ -37,8 +39,7 @@ _GENERIC_CODE_HOSTING_DOMAINS = [
 def _git_config_entries(env: dict[str, str]) -> dict[str, str]:
     count = int(env["GIT_CONFIG_COUNT"])
     return {
-        env[f"GIT_CONFIG_KEY_{index}"]: env[f"GIT_CONFIG_VALUE_{index}"]
-        for index in range(count)
+        env[f"GIT_CONFIG_KEY_{index}"]: env[f"GIT_CONFIG_VALUE_{index}"] for index in range(count)
     }
 
 
@@ -54,8 +55,7 @@ def test_git_http_auth_config_defaults_username_and_builds_isolated_env() -> Non
     assert config.token == "secret-token"
     assert "secret-token" not in repr(config)
     assert git_http_basic_auth_header(config) == (
-        "Authorization: Basic "
-        + base64.b64encode(b"oauth2:secret-token").decode("ascii")
+        "Authorization: Basic " + base64.b64encode(b"oauth2:secret-token").decode("ascii")
     )
 
     repo_url = "https://git.example.com/org/private.git"
@@ -479,8 +479,7 @@ class TestGitAccessor:
         env = clone_call.kwargs["env"]
         assert token not in " ".join(str(arg) for arg in clone_call.args)
         assert _git_config_entries(env)[f"http.{source}.extraHeader"] == (
-            "Authorization: Basic "
-            + base64.b64encode(f"git-user:{token}".encode()).decode("ascii")
+            "Authorization: Basic " + base64.b64encode(f"git-user:{token}".encode()).decode("ascii")
         )
         assert resource.original_source == source
         assert token not in str(resource.meta)
@@ -531,6 +530,114 @@ class TestGitAccessor:
     def test_cannot_handle_local_zip_file(self, accessor: GitAccessor) -> None:
         """GitAccessor should leave local zip files to LocalAccessor/ZipParser."""
         assert accessor.can_handle(Path("/path/to/archive.zip")) is False
+
+    def test_can_handle_local_git_snapshot_zip(self, accessor: GitAccessor, tmp_path: Path) -> None:
+        archive = tmp_path / "repo.zip"
+        archive.write_bytes(b"placeholder")
+
+        assert accessor.can_handle(
+            archive,
+            git_local={
+                "version": 1,
+                "repo_key": "local:test-repo",
+                "repo_name": "test-repo",
+                "branch": "main",
+                "commit": "a" * 40,
+                "archive_format": "zip",
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_access_local_git_snapshot_returns_git_resource(
+        self, accessor: GitAccessor, tmp_path: Path
+    ) -> None:
+        archive = tmp_path / "repo.zip"
+        with zipfile.ZipFile(archive, "w") as zip_file:
+            zip_file.writestr("README.md", "# local repository\n")
+            zip_file.writestr("src/main.py", "print('ok')\n")
+
+        resource = await accessor.access(
+            archive,
+            git_local={
+                "version": 1,
+                "repo_key": "local:test-repo",
+                "repo_name": "test-repo",
+                "branch": "main",
+                "commit": "A" * 40,
+                "archive_format": "zip",
+            },
+        )
+        try:
+            assert resource.source_type == SourceType.GIT
+            assert resource.original_source == "local:test-repo"
+            assert resource.meta == {
+                "repo_name": "test-repo",
+                "repo_ref": "main",
+                "repo_commit": "a" * 40,
+                "repo_key": "local:test-repo",
+                "_cleanup_path": resource.meta["_cleanup_path"],
+            }
+            assert (resource.path / "README.md").read_text() == "# local repository\n"
+            assert (resource.path / "src" / "main.py").exists()
+            assert (resource.path / ".git_source_repo").read_text() == "local:test-repo"
+            assert await DirectoryParser._is_git_repository(resource.path)
+        finally:
+            cleanup_path = (
+                resource.path.parent
+                if resource.path.parent.name.startswith("ov_git_")
+                else resource.path
+            )
+            resource.cleanup()
+            assert not cleanup_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_access_local_git_snapshot_cleans_single_root_wrapper(
+        self, accessor: GitAccessor, tmp_path: Path
+    ) -> None:
+        archive = tmp_path / "repo.zip"
+        with zipfile.ZipFile(archive, "w") as zip_file:
+            zip_file.writestr("repo-root/README.md", "# wrapped\n")
+
+        resource = await accessor.access(
+            archive,
+            git_local={
+                "version": 1,
+                "repo_key": "local:wrapped",
+                "repo_name": "wrapped",
+                "branch": "main",
+                "commit": "b" * 40,
+                "archive_format": "zip",
+            },
+        )
+        cleanup_path = Path(resource.meta["_cleanup_path"])
+        assert resource.path.name == "repo-root"
+        assert cleanup_path.exists()
+
+        resource.cleanup()
+        assert not cleanup_path.exists()
+
+    @pytest.mark.parametrize(
+        "git_local",
+        [
+            True,
+            {},
+            {
+                "version": 1,
+                "repo_key": "local:test-repo",
+                "repo_name": "test-repo",
+                "branch": "main",
+                "commit": "short",
+                "archive_format": "zip",
+            },
+        ],
+    )
+    def test_rejects_invalid_local_git_snapshot_metadata(
+        self, accessor: GitAccessor, tmp_path: Path, git_local
+    ) -> None:
+        archive = tmp_path / "repo.zip"
+        archive.write_bytes(b"placeholder")
+
+        assert accessor.can_handle(archive, git_local=git_local) is False
 
     @pytest.mark.parametrize(
         "source",
@@ -645,9 +752,7 @@ class TestGitAccessor:
             new=AsyncMock(return_value=process),
         ):
             with pytest.raises(asyncio.CancelledError):
-                await accessor._run_git(
-                    ["git", "clone", "https://git.example.com/org/private.git"]
-                )
+                await accessor._run_git(["git", "clone", "https://git.example.com/org/private.git"])
 
         process.kill.assert_called_once_with()
         process.wait.assert_awaited_once_with()

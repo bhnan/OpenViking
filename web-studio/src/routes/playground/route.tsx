@@ -174,7 +174,7 @@ function PlaygroundWorkbench() {
     refreshTasks,
     tasks,
   } = useResourceUpload()
-  const { invalidateList } = useInvalidateVikingFs()
+  const { invalidateAll } = useInvalidateVikingFs()
 
   const syncSearch = useCallback(
     (next: {
@@ -518,8 +518,7 @@ function PlaygroundWorkbench() {
             onOpenProcessingTasks={handleOpenProcessingTasks}
             onOpenSearch={handleOpenSearch}
             onRefresh={() => {
-              void invalidateList(currentUri)
-              void listQuery.refetch()
+              void invalidateAll()
             }}
           />
           <div className="min-h-0 flex-1">

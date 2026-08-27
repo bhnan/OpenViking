@@ -47,6 +47,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|RunCommand|Shell|exec_command|codex_exec",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node __OPENVIKING_TRAE_CLI_ROOT__/scripts/repository-sync.mjs",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

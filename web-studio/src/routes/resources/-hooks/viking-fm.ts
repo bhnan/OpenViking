@@ -164,7 +164,11 @@ export function useInvalidateVikingFs() {
 
   return {
     invalidateAll: () =>
-      queryClient.invalidateQueries({ queryKey: ['viking-fs'] }),
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['viking-fs-ls'] }),
+        queryClient.invalidateQueries({ queryKey: ['viking-fs-tree'] }),
+        queryClient.invalidateQueries({ queryKey: ['viking-file-read'] }),
+      ]),
     invalidateList: (uri?: string) =>
       queryClient.invalidateQueries({
         queryKey: uri

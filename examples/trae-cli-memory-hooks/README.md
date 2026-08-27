@@ -2,7 +2,9 @@
 
 This directory provides the TRAE CLI lifecycle adapter for OpenViking memory:
 three lifecycle hooks, a `PreToolUse` URI guard, and the `openviking-memory`
-MCP server.
+MCP server. It also registers a `PostToolUse` repository hook that uploads the
+committed `HEAD` snapshot of a local Git repository after successful Git
+mutations.
 
 ## Installation
 
@@ -29,7 +31,7 @@ bash examples/memory-plugin-shared/install.sh --harness trae-cli --uninstall --y
 
 ## Hook and MCP Surface
 
-The draft registers four hook events:
+The integration registers five hook events:
 
 | Event | Entry | Reuse assessment |
 | --- | --- | --- |
@@ -37,6 +39,7 @@ The draft registers four hook events:
 | `UserPromptSubmit` | `scripts/auto-recall.mjs` | Reuses the shared recall path. Requires TRAE CLI prompt input to be exposed as `prompt`, `user_prompt`, `message`, or `text`. |
 | `Stop` | `scripts/auto-capture.mjs` | Reuses shared session append and commit helpers. Requires TRAE CLI stop input to expose the assistant response as `last_assistant_message`, `assistant_message`, `response`, `output`, or `text_content`. |
 | `PreToolUse` | `scripts/uri-guard.mjs` | Follows the Codex hook output style for `permissionDecision: "deny"` and reuses the shared `agent-uri-guard` evaluator. |
+| `PostToolUse` | `scripts/repository-sync.mjs` | For successful Git mutations from `Bash`, `RunCommand`, `Shell`, `exec_command`, or `codex_exec`, detaches a worker, creates `git archive HEAD`, uploads it with `args.git_local`, and updates a stable per-repository/branch resource URI. |
 
 TRAE CLI lifecycle hooks do not use TRAE / TRAE CN's `decision: "approve"`
 output. No-op lifecycle hooks emit `{}`; context injection emits only
@@ -76,12 +79,36 @@ runtime is assembled by the installer at install time.
   OpenViking `/mcp` proxy.
 - `examples/memory-plugin-shared/lib/agent-uri-guard.mjs` handles `PreToolUse`
   blocking when local file or shell tools receive `viking://` virtual paths.
+- `examples/memory-plugin-shared/lib/repository-sync.mjs` handles Git event
+  filtering, committed snapshot creation, upload, and per-branch deduplication.
 
 The source package intentionally does not carry a vendored `lib/` directory.
 The installer should copy `examples/trae-cli-memory-hooks` into
 `$OV_HOME/agent-integrations/trae-cli` and assemble the shared runtime into
 `$OV_HOME/agent-integrations/memory-plugin-shared/lib`, matching the existing
 TRAE installation model.
+
+## Local Git Repository Sync
+
+The repository hook is event-driven; it does not scan the machine for Git
+repositories. It handles successful `commit`, `merge`, `rebase`, `pull`,
+`checkout`, `switch`, `reset`, and `revert` commands from
+`Bash|RunCommand|Shell` tool events.
+
+The uploaded archive is generated with `git archive HEAD`, so it contains the
+committed tree only:
+
+- no `.git/` directory;
+- no untracked or uncommitted files;
+- no recursive submodule content;
+- files already tracked by Git remain in the snapshot even if a later
+  `.gitignore` rule matches them.
+
+The hook returns to TRAE CLI immediately and performs archive/upload work in a
+detached process. Set `OPENVIKING_GIT_LOCAL_ENABLED=0` to disable repository
+sync without disabling memory hooks. Per-repository state is stored under
+`~/.openviking/repository-sync/` to avoid uploading the same branch/commit
+twice.
 
 ## What Is Not Reused From Codex
 

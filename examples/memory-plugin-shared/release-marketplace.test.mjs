@@ -65,6 +65,7 @@ test("release marketplace archive supports a ZCode TOS install", () => {
       "Stop",
     ]);
     assert.ok(config.mcp.servers.openviking);
+    assert.ok(existsSync(join(stage, "skills", "repo-wiki", "SKILL.md")));
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

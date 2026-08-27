@@ -229,3 +229,5 @@ node_modules/
 
 # Local scratch / working notes
 .scratch/
+/.repo_memory/
+.agents/

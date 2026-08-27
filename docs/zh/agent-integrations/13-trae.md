@@ -36,8 +36,15 @@ bash <(curl -fsSL https://ovrelease.tos-cn-beijing.volces.com/memory-plugin-shar
 - `SessionStart`：加载用户画像和当前项目记忆。
 - `UserPromptSubmit`：根据当前问题召回并注入相关内容。
 - `PreToolUse`：阻止把 `viking://` 虚拟路径当作本地文件访问，并提示改用 OpenViking MCP 工具。
+- `PostToolUse`：成功执行会改变 `HEAD` 的 Git 命令后，异步上传已提交的代码快照；`git status`、`git diff` 等只读命令不会触发上传。
 - `Stop`：捕获本轮消息并立即提交，使短会话也能进入记忆抽取流程。
 - OpenViking MCP Server：提供 `search`、`recall`、`read`、`remember` 等主动记忆工具。
+- 安装器同时安装 `repo-wiki` Skill，用于在本地 `.repo_memory` 中创建、更新、校验 Wiki，并区分本地与云端 Wiki 检索。
+
+仓库 Wiki 上传目前是默认关闭的插件 MVP。只在隔离测试环境中设置
+`OPENVIKING_REPO_WIKI_UPLOAD_ENABLED=1` 后，现有仓库 Hook 才会把 Wiki 与
+`git_local` 代码快照分开上传。Wiki 使用 no-split、vectors-only 资源导入，
+保留 Skill 已编写的页面，并跳过服务端二次语义摘要。
 
 ## 验证
 

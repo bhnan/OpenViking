@@ -45,6 +45,8 @@ for required in \
   codex-memory-plugin/skills/openviking-memory/SKILL.md \
   codex-memory-plugin/skills/ov-memory-doctor/SKILL.md \
   codex-memory-plugin/scripts/ov-memory-doctor.mjs \
+  codex-memory-plugin/scripts/repository-sync.mjs \
+  codex-memory-plugin/scripts/shared/repository-sync.mjs \
   trae-memory-hooks/hooks/hooks.json \
   trae-memory-hooks/.mcp.json \
   trae-memory-hooks/openviking.integration.json \
@@ -80,6 +82,7 @@ for required in \
   memory-plugin-shared/lib/agent-hook-runtime.mjs \
   memory-plugin-shared/lib/agent-uri-guard.mjs \
   memory-plugin-shared/lib/async-writer.mjs \
+  memory-plugin-shared/lib/repository-sync.mjs \
   memory-plugin-shared/lib/retryable.mjs \
   memory-plugin-shared/lib/uri-guard.mjs \
   memory-plugin-shared/lib/mcp-proxy-core.mjs; do

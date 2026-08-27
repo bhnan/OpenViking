@@ -20,6 +20,7 @@ const HARNESS_SHARED_FILES = [
 ];
 const OPENCODE_SHARED_FILES = [...HARNESS_SHARED_FILES, "mcp-proxy-core.mjs", "async-writer.mjs", "batch-send.mjs"];
 const DOCTOR_SHARED_FILES = [...OPENCODE_SHARED_FILES, "doctor-core.mjs"];
+const CODEX_SHARED_FILES = [...DOCTOR_SHARED_FILES, "repository-sync.mjs"];
 const ZCODE_SHARED_FILES = [...OPENCODE_SHARED_FILES, "agent-hook-runtime.mjs", "agent-uri-guard.mjs"];
 const AGENT_PLUGINS_SHARED_FILES = [
   "credentials.mjs",
@@ -29,7 +30,7 @@ const AGENT_PLUGINS_SHARED_FILES = [
 ];
 const TARGETS = [
   { dir: join(ROOT, "examples", "claude-code-memory-plugin", "scripts", "shared"), files: DOCTOR_SHARED_FILES },
-  { dir: join(ROOT, "examples", "codex-memory-plugin", "scripts", "shared"), files: DOCTOR_SHARED_FILES },
+  { dir: join(ROOT, "examples", "codex-memory-plugin", "scripts", "shared"), files: CODEX_SHARED_FILES },
   { dir: join(ROOT, "examples", "opencode-plugin", "lib", "shared"), files: OPENCODE_SHARED_FILES },
   { dir: join(ROOT, "examples", "dsh-memory-plugin", "shared"), files: HARNESS_SHARED_FILES },
   { dir: join(ROOT, "examples", "pi-coding-agent-extension", "shared"), files: HARNESS_SHARED_FILES },

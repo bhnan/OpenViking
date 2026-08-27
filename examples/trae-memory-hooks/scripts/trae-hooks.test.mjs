@@ -39,6 +39,7 @@ test("TRAE integration contains native Hook and MCP declarations", () => {
     "Stop",
   ]);
   assert.ok(integration.capabilities.includes("git-local"));
+  assert.ok(integration.capabilities.includes("repo-wiki"));
 });
 
 test("TRAE URI guard follows the Claude Code PreToolUse response contract", () => {

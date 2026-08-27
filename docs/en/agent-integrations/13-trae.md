@@ -52,6 +52,13 @@ inactive until that trust step is completed.
 - `PostToolUse` uploads the committed `HEAD` after successful Git commands that can change it. Read-only commands such as `git status` and `git diff` do not upload.
 - `Stop` captures and immediately commits the completed turn, including short sessions.
 - The OpenViking MCP server provides explicit tools such as `search`, `recall`, `read`, and `remember`.
+- The installer adds the `repo-wiki` Skill for local `.repo_memory` creation, update, validation, and local/cloud Wiki retrieval routing.
+
+Repository Wiki publication is a plugin MVP and is disabled by default. In an
+isolated test environment, set `OPENVIKING_REPO_WIKI_UPLOAD_ENABLED=1` to let
+the existing repository hook upload Wiki files separately from the `git_local`
+code snapshot. Wiki uploads use no-split, vectors-only resource ingestion to
+preserve authored files and avoid server-side re-summarization.
 
 ## Verify
 

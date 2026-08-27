@@ -1301,7 +1301,7 @@ class MarkdownParser(BaseParser):
         estimated_tokens = self._estimate_token_count(content)
 
         # Create root directory
-        ops.append(_LayoutOp("mkdir", root_dir))
+        ops.append(_LayoutOp("mkdir", root_dir, exist_ok=True))
 
         # Get document name
         doc_name = doc_name or self._sanitize_for_path(

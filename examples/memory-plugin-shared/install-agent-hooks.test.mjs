@@ -127,6 +127,12 @@ test("TRAE CLI install preserves unrelated config and is idempotent", () => {
     assert.equal(manifest.client, "trae-cli");
     assert.equal(manifest.hooksConfig, hooksPath);
     assert.equal(manifest.mcpConfig, configPath);
+    const repoWikiSkill = join(home, ".trae", "skills", "repo-wiki");
+    assert.ok(existsSync(join(repoWikiSkill, "SKILL.md")));
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(repoWikiSkill, ".openviking-managed.json"), "utf8")).clients,
+      ["trae-cli"],
+    );
 
     const smoke = spawnSync(process.execPath, [join(integrationRoot, "scripts", "session-start.mjs")], {
       env: { ...process.env, HOME: home, OPENVIKING_MEMORY_ENABLED: "0" },
@@ -162,6 +168,7 @@ test("TRAE CLI install preserves unrelated config and is idempotent", () => {
     assert.match(configAfter, /\[mcp_servers\.third_party\]/);
     assert.doesNotMatch(configAfter, /openviking-memory/);
     assert.equal(existsSync(integrationRoot), false);
+    assert.equal(existsSync(repoWikiSkill), false);
     assert.equal(
       existsSync(join(home, ".openviking", "agent-integrations", "memory-plugin-shared")),
       false,
@@ -390,6 +397,8 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
     assert.equal(traeCnServers.openviking.env.OPENVIKING_HOOK_SOURCE, "trae-cn");
     assert.ok(traeCnServers["third-party"]);
     assert.equal(Boolean(traeCnServers["ov-mcp-server"]), false);
+    assert.ok(existsSync(join(home, ".trae", "skills", "repo-wiki", "SKILL.md")));
+    assert.ok(existsSync(join(home, ".trae-cn", "skills", "repo-wiki", "SKILL.md")));
 
     runUninstall(home);
     assert.ok(JSON.parse(readFileSync(cursorHooks, "utf8")).hooks.stop.some((entry) => entry.command === "third-party stop"));
@@ -415,6 +424,30 @@ test("combined Cursor and TRAE install preserves unrelated hooks and is idempote
       false,
     );
     assert.equal(existsSync(join(home, ".openviking", "agent-integrations", "memory-plugin-shared")), false);
+    assert.equal(existsSync(join(home, ".trae", "skills", "repo-wiki")), false);
+    assert.equal(existsSync(join(home, ".trae-cn", "skills", "repo-wiki")), false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("TRAE install refuses to overwrite an unmanaged repo-wiki skill", () => {
+  const home = mkdtempSync(join(tmpdir(), "openviking-unmanaged-repo-wiki-"));
+  try {
+    const skill = join(home, ".trae", "skills", "repo-wiki");
+    mkdirSync(skill, { recursive: true });
+    writeFileSync(join(skill, "SKILL.md"), "user-owned skill\n");
+    const result = runInstaller(home, [
+      "--harness", "trae",
+      "--source", "dev",
+      "--lang", "en",
+      "--url", "http://127.0.0.1:1933",
+      "--api-key", "",
+      "--yes",
+    ]);
+    assert.notEqual(result.status, 0);
+    assert.equal(readFileSync(join(skill, "SKILL.md"), "utf8"), "user-owned skill\n");
+    assert.equal(existsSync(join(skill, ".openviking-managed.json")), false);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

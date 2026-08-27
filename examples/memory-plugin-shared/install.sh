@@ -62,6 +62,7 @@ OVCLI_CONF="${OPENVIKING_CLI_CONFIG_FILE:-$OV_HOME/ovcli.conf}"
 MARKETPLACE_NAME="${OPENVIKING_MARKETPLACE_NAME:-openviking}"
 PLUGIN_NAME="openviking-memory"
 PLUGIN_ID="${PLUGIN_NAME}@${MARKETPLACE_NAME}"
+REPO_WIKI_SKILL_NAME="repo-wiki"
 
 # Pre-unification names, cleaned up on upgrade.
 OLD_MARKETPLACE_NAME='openviking-plugins-local'
@@ -1217,6 +1218,101 @@ plugin_dir_on_disk() { # plugin_dir_on_disk <plugin-subdir>
   return 1
 }
 
+repo_wiki_skill_root() { # repo_wiki_skill_root <trae|trae-cn|trae-cli>
+  case "$1" in
+    trae|trae-cli) printf '%s' "${TRAE_HOME:-$HOME/.trae}/skills" ;;
+    trae-cn) printf '%s' "${TRAE_CN_HOME:-$HOME/.trae-cn}/skills" ;;
+    *) return 1 ;;
+  esac
+}
+
+install_repo_wiki_skill() { # install_repo_wiki_skill <client-id>
+  local client_id="$1" source root dest marker tmp
+  source="$(plugin_dir_on_disk skills/$REPO_WIKI_SKILL_NAME)" || {
+    err "$(t 'Repository Wiki skill source not found.' '未找到 Repository Wiki Skill 源码。')"
+    return 1
+  }
+  root="$(repo_wiki_skill_root "$client_id")" || return 1
+  dest="$root/$REPO_WIKI_SKILL_NAME"
+  marker="$dest/.openviking-managed.json"
+  if [ -e "$dest" ]; then
+    if [ ! -f "$marker" ] \
+      || ! grep -q '"owner": "openviking-memory-installer"' "$marker" \
+      || ! grep -q '"skill": "repo-wiki"' "$marker"; then
+      err "$(t 'Refusing to overwrite unmanaged skill:' '拒绝覆盖非托管 Skill：') $dest"
+      return 1
+    fi
+  fi
+  mkdir -p "$root"
+  tmp="$dest.tmp"
+  rm -rf "$tmp"
+  cp -R "$source" "$tmp"
+  "$NODE_BIN" - "$marker" "$tmp/.openviking-managed.json" "$client_id" "$tmp" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const crypto = require("node:crypto");
+const [oldMarker, newMarker, clientId, skillRoot] = process.argv.slice(2);
+let clients = [];
+try { clients = JSON.parse(fs.readFileSync(oldMarker, "utf8")).clients || []; } catch {}
+clients = [...new Set([...clients, clientId])].sort();
+function files(root, current = "") {
+  const dir = path.join(root, current);
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const rel = path.posix.join(current, entry.name);
+    if (entry.name === ".openviking-managed.json") return [];
+    if (entry.isDirectory()) return files(root, rel);
+    return entry.isFile() ? [rel] : [];
+  });
+}
+const hash = crypto.createHash("sha256");
+for (const rel of files(skillRoot).sort()) {
+  hash.update(rel).update("\0").update(fs.readFileSync(path.join(skillRoot, rel))).update("\0");
+}
+fs.writeFileSync(newMarker, `${JSON.stringify({
+  schemaVersion: 1,
+  owner: "openviking-memory-installer",
+  skill: "repo-wiki",
+  contentHash: hash.digest("hex"),
+  clients,
+}, null, 2)}\n`, { mode: 0o600 });
+NODE
+  rm -rf "$dest"
+  mv "$tmp" "$dest"
+  info "$(t 'Repository Wiki skill installed:' 'Repository Wiki Skill 已安装：') $dest"
+}
+
+remove_repo_wiki_skill_if_managed() { # remove_repo_wiki_skill_if_managed <client-id>
+  local client_id="$1" root dest marker action
+  root="$(repo_wiki_skill_root "$client_id")" || return 0
+  dest="$root/$REPO_WIKI_SKILL_NAME"
+  marker="$dest/.openviking-managed.json"
+  [ -f "$marker" ] || return 0
+  action="$("$NODE_BIN" - "$marker" "$client_id" <<'NODE'
+const fs = require("node:fs");
+const [marker, clientId] = process.argv.slice(2);
+let parsed;
+try { parsed = JSON.parse(fs.readFileSync(marker, "utf8")); } catch { process.stdout.write("keep"); process.exit(0); }
+if (parsed.owner !== "openviking-memory-installer" || parsed.skill !== "repo-wiki") {
+  process.stdout.write("keep");
+  process.exit(0);
+}
+parsed.clients = (Array.isArray(parsed.clients) ? parsed.clients : []).filter((item) => item !== clientId);
+if (parsed.clients.length === 0) process.stdout.write("remove");
+else { fs.writeFileSync(marker, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 }); process.stdout.write("keep"); }
+NODE
+)"
+  if [ "$action" = "remove" ]; then rm -rf "$dest"; fi
+}
+
+validate_repo_wiki_skill() { # validate_repo_wiki_skill <client-id>
+  local root dest marker
+  root="$(repo_wiki_skill_root "$1")" || return 1
+  dest="$root/$REPO_WIKI_SKILL_NAME"
+  marker="$dest/.openviking-managed.json"
+  [ -f "$dest/SKILL.md" ] && [ -f "$marker" ] \
+    && grep -q '"owner": "openviking-memory-installer"' "$marker"
+}
+
 prepare_marketplace_dir() {
   case "$SOURCE_MODE" in
     dev)
@@ -2244,11 +2340,13 @@ uninstall_agent_integrations() {
     info "$(t 'Removed the Cursor OpenViking integration.' '已移除 Cursor OpenViking 集成。')"
   fi
   if contains_harness trae; then
+    remove_repo_wiki_skill_if_managed trae
     agent_remove_json_configs "$(trae_hooks_path trae)" "$(trae_mcp_path trae)"
     rm -rf "$OV_HOME/agent-integrations/trae"
     info "$(t 'Removed TRAE OpenViking hooks and MCP config.' '已移除 TRAE OpenViking hooks 与 MCP 配置。')"
   fi
   if contains_harness trae-cn; then
+    remove_repo_wiki_skill_if_managed trae-cn
     agent_remove_json_configs "$(trae_hooks_path trae-cn)" "$(trae_mcp_path trae-cn)"
     rm -rf "$OV_HOME/agent-integrations/trae-cn"
     info "$(t 'Removed TRAE CN OpenViking hooks and MCP config.' '已移除 TRAE CN OpenViking hooks 与 MCP 配置。')"
@@ -2256,6 +2354,7 @@ uninstall_agent_integrations() {
   if contains_harness trae-cli; then
     local trae_home="${TRAE_HOME:-$HOME/.trae}"
     local trae_cli_home="${TRAECLI_HOME:-$trae_home/cli}"
+    remove_repo_wiki_skill_if_managed trae-cli
     agent_remove_trae_cli_configs "$trae_cli_home/hooks.json" "$trae_home/traecli.toml"
     rm -rf "$OV_HOME/agent-integrations/trae-cli"
     info "$(t 'Removed TRAE CLI OpenViking hooks and MCP config.' '已移除 TRAE CLI OpenViking hooks 与 MCP 配置。')"
@@ -2476,6 +2575,7 @@ install_trae_variant() { # install_trae_variant <trae|trae-cn>
   root="$(assemble_agent_integration trae-memory-hooks "$client_id")" || return 1
   hooks_path="$(trae_hooks_path "$client_id")"
   mcp_path="$(trae_mcp_path "$client_id")"
+  install_repo_wiki_skill "$client_id" || return 1
   agent_write_json_configs trae "$hooks_path" "$mcp_path" "$root" "$client_id" "$NODE_BIN"
   info "$client_id hooks: $hooks_path"
   info "$client_id MCP: $mcp_path"
@@ -2489,6 +2589,7 @@ install_trae_cli() {
   trae_cli_home="${TRAECLI_HOME:-$trae_home/cli}"
   hooks_path="$trae_cli_home/hooks.json"
   config_path="$trae_home/traecli.toml"
+  install_repo_wiki_skill trae-cli || return 1
   agent_write_trae_cli_configs "$hooks_path" "$config_path" "$root" "$NODE_BIN"
   info "$(t 'TRAE CLI hooks installed:' 'TRAE CLI hooks 已安装：') $hooks_path"
   info "$(t 'TRAE CLI MCP installed:' 'TRAE CLI MCP 已安装：') $config_path (mcp_servers.openviking-memory)"
@@ -3034,7 +3135,8 @@ EOF
       && [ -f "$OV_HOME/agent-integrations/trae/scripts/trae-hook.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae/scripts/uri-guard.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae/scripts/repository-sync.mjs" ] \
-      && [ -f "$OV_HOME/agent-integrations/trae/integration.json" ]; then
+      && [ -f "$OV_HOME/agent-integrations/trae/integration.json" ] \
+      && validate_repo_wiki_skill trae; then
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae/scripts/trae-hook.mjs" \
         || { ok=0; agent_fatal=1; }
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae/scripts/uri-guard.mjs" \
@@ -3066,7 +3168,8 @@ EOF
       && [ -f "$OV_HOME/agent-integrations/trae-cn/scripts/trae-hook.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae-cn/scripts/uri-guard.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae-cn/scripts/repository-sync.mjs" ] \
-      && [ -f "$OV_HOME/agent-integrations/trae-cn/integration.json" ]; then
+      && [ -f "$OV_HOME/agent-integrations/trae-cn/integration.json" ] \
+      && validate_repo_wiki_skill trae-cn; then
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae-cn/scripts/trae-hook.mjs" \
         || { ok=0; agent_fatal=1; }
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae-cn/scripts/uri-guard.mjs" \
@@ -3100,7 +3203,8 @@ EOF
       && [ -f "$OV_HOME/agent-integrations/trae-cli/scripts/trae-cli-hook.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae-cli/scripts/uri-guard.mjs" ] \
       && [ -f "$OV_HOME/agent-integrations/trae-cli/scripts/repository-sync.mjs" ] \
-      && [ -f "$OV_HOME/agent-integrations/trae-cli/integration.json" ]; then
+      && [ -f "$OV_HOME/agent-integrations/trae-cli/integration.json" ] \
+      && validate_repo_wiki_skill trae-cli; then
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae-cli/scripts/trae-cli-hook.mjs" \
         || { ok=0; agent_fatal=1; }
       "$NODE_BIN" --check "$OV_HOME/agent-integrations/trae-cli/scripts/uri-guard.mjs" \
@@ -3277,9 +3381,9 @@ esac
 if contains_harness claude; then info "Claude-format: $(list_words "$CLAUDE_BINS") -> $PLUGIN_ID"; fi
 if contains_harness codex; then info "Codex-format:  $(list_words "$CODEX_BINS") -> $PLUGIN_ID"; fi
 if contains_harness cursor; then info "Cursor: Hooks + MCP + Rule + Skill"; fi
-if contains_harness trae; then info "TRAE: ~/.trae/hooks.json + MCP"; fi
-if contains_harness trae-cn; then info "TRAE CN: ~/.trae-cn/hooks.json + MCP"; fi
-if contains_harness trae-cli; then info "TRAE CLI: ${TRAECLI_HOME:-${TRAE_HOME:-~/.trae}/cli}/hooks.json + ${TRAE_HOME:-~/.trae}/traecli.toml"; fi
+if contains_harness trae; then info "TRAE: ~/.trae/hooks.json + MCP + Repository Wiki Skill"; fi
+if contains_harness trae-cn; then info "TRAE CN: ~/.trae-cn/hooks.json + MCP + Repository Wiki Skill"; fi
+if contains_harness trae-cli; then info "TRAE CLI: ${TRAECLI_HOME:-${TRAE_HOME:-~/.trae}/cli}/hooks.json + ${TRAE_HOME:-~/.trae}/traecli.toml + Repository Wiki Skill"; fi
 if contains_harness zcode; then info "ZCode: ~/.zcode/cli/config.json (hooks + MCP)"; fi
 if contains_harness opencode; then info "OpenCode: @openviking/opencode-plugin"; fi
 if contains_harness pi; then info "pi: ~/.pi/agent/extensions/openviking"; fi

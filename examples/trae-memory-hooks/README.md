@@ -9,6 +9,13 @@ change `HEAD`, uploads a committed `git archive HEAD` snapshot, and updates a
 stable resource for the current repository and branch. Read-only commands such
 as `git status` and `git diff` do not upload anything.
 
+The installer also installs the `repo-wiki` Skill under the TRAE user Skill
+root. The Skill creates, updates, validates, and searches `.repo_memory` locally.
+Repository Wiki publication is disabled by default. Set
+`OPENVIKING_REPO_WIKI_UPLOAD_ENABLED=1` only in an isolated validation
+environment to make the existing repository hook upload a separate no-split,
+vectors-only Wiki snapshot. Code and Wiki uploads keep independent state.
+
 Use the shared installer:
 
 ```bash

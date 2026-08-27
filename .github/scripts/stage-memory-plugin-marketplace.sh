@@ -20,8 +20,15 @@ cp -R \
   "${ROOT}/examples/pi-coding-agent-extension" \
   "${ROOT}/examples/memory-plugin-shared" \
   "${STAGE}/"
+mkdir -p "${STAGE}/skills"
+cp -R "${ROOT}/examples/skills/repo-wiki" "${STAGE}/skills/"
 
 for required in \
+  skills/repo-wiki/SKILL.md \
+  skills/repo-wiki/defaults.json \
+  skills/repo-wiki/references/repo-build.md \
+  skills/repo-wiki/scripts/collect_all.py \
+  skills/repo-wiki/scripts/validate_memory.py \
   claude-code-memory-plugin/skills/ov-experience-memory/SKILL.md \
   codex-memory-plugin/skills/ov-experience-memory/SKILL.md \
   cursor-memory-plugin/.cursor-plugin/plugin.json \
@@ -58,6 +65,7 @@ for required in \
   trae-cli-memory-hooks/scripts/auto-capture.mjs \
   trae-cli-memory-hooks/scripts/trae-cli-turns.mjs \
   trae-cli-memory-hooks/scripts/uri-guard.mjs \
+  trae-cli-memory-hooks/scripts/repository-sync.mjs \
   trae-cli-memory-hooks/servers/mcp-proxy.mjs \
   zcode-memory-plugin/.zcode-plugin/plugin.json \
   zcode-memory-plugin/hooks/hooks.json \
@@ -76,7 +84,8 @@ for required in \
   memory-plugin-shared/lib/async-writer.mjs \
   memory-plugin-shared/lib/retryable.mjs \
   memory-plugin-shared/lib/uri-guard.mjs \
-  memory-plugin-shared/lib/mcp-proxy-core.mjs; do
+  memory-plugin-shared/lib/mcp-proxy-core.mjs \
+  memory-plugin-shared/lib/repository-sync.mjs; do
   test -f "${STAGE}/${required}" || {
     echo "Marketplace archive is missing ${required}" >&2
     exit 1

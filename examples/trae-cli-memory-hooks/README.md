@@ -22,6 +22,7 @@ The installer:
   `$OPENVIKING_HOME/agent-integrations/trae-cli`;
 - merges hooks into `${TRAECLI_HOME:-${TRAE_HOME:-~/.trae}/cli}/hooks.json`;
 - registers `openviking-memory` in `${TRAE_HOME:-~/.trae}/traecli.toml`.
+- installs the managed `repo-wiki` Skill under `${TRAE_HOME:-~/.trae}/skills`.
 
 Uninstall with:
 
@@ -103,6 +104,14 @@ committed tree only:
 - no recursive submodule content;
 - files already tracked by Git remain in the snapshot even if a later
   `.gitignore` rule matches them.
+
+The OpenViking hook explicitly excludes `.repo_memory` from the code archive.
+When `OPENVIKING_REPO_WIKI_UPLOAD_ENABLED=1`, it separately validates and
+uploads the local `.repo_memory` publication to the current repository/current
+user Wiki target. The Wiki request uses `parse_mode=no_split` and
+`processing_mode=vectors_only`, so OpenViking preserves authored page files and
+does not run a second semantic-summary generation pass. The option is disabled
+by default.
 
 The hook returns to TRAE CLI immediately and performs archive/upload work in a
 detached process. Set `OPENVIKING_GIT_LOCAL_ENABLED=0` to disable repository

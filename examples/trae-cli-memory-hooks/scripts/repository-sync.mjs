@@ -37,8 +37,13 @@ async function main() {
   log("repository-sync", {
     status: result?.status,
     reason: result?.reason,
-    task_id: result?.result?.task_id,
-    root_uri: result?.result?.root_uri,
+    code_status: result?.code?.status,
+    code_task_id: result?.code?.result?.task_id,
+    code_root_uri: result?.code?.result?.root_uri,
+    wiki_status: result?.wiki?.status,
+    wiki_reason: result?.wiki?.reason,
+    wiki_task_id: result?.wiki?.result?.task_id,
+    wiki_root_uri: result?.wiki?.result?.root_uri,
   });
   if (process.env.OV_HOOK_WORKER !== "1") output({});
 }
